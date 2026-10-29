@@ -1,19 +1,23 @@
-# Agent 框架
-langgraph>=0.3.0
-langchain-core>=0.3.0
-langchain-openai>=0.2.0
+# 依赖清单 —— 地板/上限以【本地已验证版本矩阵】为准（2026-10-29 全量测试通过的环境）。
+# 原则：只写验证过的版本区间。松散下界曾让新装机解析到 pandas 3.x / openai 3.x
+# 等未验证的大版本（pip 日志实测），以及一个不存在的 pywencai>=1.0.0（PyPI 最高
+# 0.13.1），`pip install -r requirements.txt` 直接失败。
+# ⚠️ 各 floor 为何是这个数：注释跟在行后。
 
-# LLM
-openai>=1.50.0
+# Agent 框架（本地验证 langgraph 1.2.9 / langchain-core 1.4.9 传递自带）
+langgraph>=1.2.9
 
-# 数据
-akshare>=1.14.0
-tushare>=1.4.0
+# LLM（自研 llm/ 客户端走 openai SDK；langchain-openai 全仓 0 import，移除）
+openai>=2.43.0,<3        # 本地验证 2.43.0；3.x 未验证，封顶
+
+# 数据（akshare 破坏频繁，地板提到验证版；新浪/东财/BaoStock 走自研源）
+akshare>=1.18.64
+tushare>=1.4.29
 # BaoStock：历史估值回填（免 token；pandas>=2 必须打 DataFrame.append 垫片，
 # 见 data/panel_store.apply_baostock_pandas_shim）
 baostock>=0.9.4
-pandas>=2.2.0
-numpy>=1.26.0
+pandas>=2.2.0,<3         # 本地验证 2.2.3；pandas 3.0 有破坏性变更（CoW 默认等），封顶
+numpy>=1.26.0,<3         # 本地验证 2.1.2
 
 # 技术指标
 # 2026-10-25：移除 pandas-ta>=0.3.14 —— PyPI 只发过 0.3.14b0（预发布，pip 默认不匹配），
@@ -25,7 +29,7 @@ ta
 # 注意：>=1.59 是"已验证可用"的下界。UI 已从 use_container_width 迁移到 width="stretch"，
 # 而该参数在旧版本（如 1.32）不存在，地板不抬高会在运行时直接 TypeError。
 streamlit>=1.59.0
-plotly>=5.22.0
+plotly>=5.22.0,<7        # 本地验证 6.9.0；7.x 未验证，封顶
 # 新前端（web/templates + FastAPI 只读层，2026-10-25 起 P1）：
 # uvicorn 本机已装但这里显式声明（新机器复现需要）；fastapi 此前未装未声明。
 # httpx：`fastapi.testclient.TestClient` 依赖它（契约测试 3455 项里 42 项用它）；
@@ -36,22 +40,25 @@ httpx>=0.27.0
 # pywebview（P6 exe 原生窗口）**可选**：不装则退回默认浏览器，不影响功能。
 # 打包依赖（PyInstaller）见 requirements-build.txt，不进运行时依赖。
 
-# 数据库
-sqlalchemy>=2.0.30
+# 数据库：SQLite 走标准库 sqlite3（db/store.py），sqlalchemy 全仓 0 import，2026-10-29 移除。
+# （原行 sqlalchemy>=2.0.30 是从未被 import 的死依赖。）
 
 # 调度
 apscheduler>=3.10.4
 
-# 配置
-pydantic-settings>=2.3.0
-pyyaml>=6.0.1
+# 配置（python-dotenv 有 import：data/source_manager.py、config/providers.py；
+#  pydantic-settings / pyyaml 全仓 0 import，2026-10-29 移除）
 python-dotenv>=1.0.0
 
 # 通知
 requests>=2.32.0
 
-# 选股
-pywencai>=1.0.0
+# 选股（问财）
+# ⚠️ pywencai 接口实测已失效（core/local_screen.py 开头有完整记录：safe_get 报
+#    NoneType 解析失败，选股已本地化替代），但 data/stock_data.py 顶层仍裸 import 它，
+#    深度分析主链 (core/agents.py) 依赖该模块 ⇒ 依赖必须可安装。
+#    PyPI 最高 0.13.1（本地验证版）；曾误写 >=1.0.0 导致整份 requirements 装不上。
+pywencai>=0.13.1
 
 # 质量
 ruff>=0.5.0
