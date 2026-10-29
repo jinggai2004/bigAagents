@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>深度分析 · bigAagents</title>
+<link rel="stylesheet" href="../static/fonts/fonts.css">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0B0E14;--sf1:#11161F;--sf2:#161D29;--sf3:#1E2635;--line:#232C3B;--line2:#2E3949;
+--tx:#E8ECF2;--tx2:#8B94A7;--tx3:#556074;--cy:#2DD4BF;--bl:#4C9AFF;--am:#F0B429;--rd:#F0483E;--gn:#1FBF75;
+--mono:'JetBrains Mono',ui-monospace,'Cascadia Mono',Consolas,monospace;--dsp:'Space Grotesk','PingFang SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif;--sans:'PingFang SC','Microsoft YaHei','Noto Sans CJK SC','Source Han Sans SC',sans-serif}
+body{background:var(--bg);color:var(--tx);font-family:var(--sans);font-size:13px;line-height:1.6;min-height:100vh}
+body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
+background:linear-gradient(rgba(45,212,191,.022) 1px,transparent 1px),linear-gradient(90deg,rgba(45,212,191,.022) 1px,transparent 1px);background-size:48px 48px}
+.app{display:grid;grid-template-columns:204px 1fr;min-height:100vh;position:relative;z-index:1}
+aside{background:var(--sf1);border-right:1px solid var(--line);padding:16px 10px;display:flex;flex-direction:column;gap:2px;position:sticky;top:0;height:100vh}
+.brand{display:flex;align-items:center;gap:9px;padding:2px 8px 16px}
+.brand i{width:22px;height:22px;border:1.5px solid var(--cy);border-radius:5px;display:grid;place-items:center;color:var(--cy);font-style:normal;font-family:var(--dsp);font-weight:700;font-size:12px;box-shadow:0 0 12px rgba(45,212,191,.25)}
+.brand b{font-family:var(--dsp);font-size:14px;letter-spacing:.01em;font-weight:500;display:block;line-height:1.2}
+.brand span{font-size:9px;color:var(--tx3);font-family:var(--mono);letter-spacing:.14em}
+.nav a{display:flex;align-items:center;gap:10px;padding:7px 10px;color:var(--tx2);text-decoration:none;border-left:2px solid transparent;border-radius:0 4px 4px 0;font-size:13px;transition:color .15s,background .15s}
+.nav a:hover{color:var(--tx);background:var(--sf2)}
+.nav a.on{color:var(--cy);border-left-color:var(--cy);background:linear-gradient(90deg,rgba(45,212,191,.09),transparent)}
+.nav svg{width:15px;height:15px;flex:none}
+.nav .ft{margin-top:auto;font-size:10px;color:var(--tx3);font-family:var(--mono);padding:8px;letter-spacing:.06em}
+main{display:flex;flex-direction:column;min-width:0}
+.top{height:46px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px;padding:0 20px;background:rgba(17,22,31,.88);position:sticky;top:0;z-index:5;backdrop-filter:blur(8px)}
+.top h1{font-size:14px;font-weight:500;font-family:var(--dsp)}
+.top .sp{flex:1}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:2px 9px;border:1px solid var(--line2);border-radius:99px;font-size:11px;color:var(--tx2);font-family:var(--mono)}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--am);box-shadow:0 0 6px var(--am)}
+.dot.cy{background:var(--cy);box-shadow:0 0 6px var(--cy)}
+.wrap{padding:20px;display:flex;flex-direction:column;gap:14px;max-width:1480px;width:100%}
+.pn{background:var(--sf1);border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.ph{display:flex;align-items:center;justify-content:space-between;padding:9px 14px;border-bottom:1px solid var(--line)}
+.ph b{font-size:12px;font-weight:500;letter-spacing:.03em}
+.ph span{font-size:11px;color:var(--tx3);font-family:var(--mono)}
+.pb{padding:14px}
+.g2{display:grid;grid-template-columns:1fr 320px;gap:14px}
+table{width:100%;border-collapse:collapse}
+th{font-size:11px;color:var(--tx3);font-weight:400;text-align:left;padding:7px 12px;border-bottom:1px solid var(--line);font-family:var(--mono);letter-spacing:.03em;white-space:nowrap}
+td{padding:8px 12px;border-bottom:1px solid rgba(35,44,59,.55);font-size:13px;white-space:nowrap}
+tr:last-child td{border-bottom:none}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.up{color:var(--rd)}.dn{color:var(--gn)}.flat{color:var(--tx2)}
+.chip{display:inline-flex;align-items:center;gap:4px;padding:0 7px;border-radius:3px;font-size:11px;border:1px solid var(--line2);color:var(--tx2);font-family:var(--mono);line-height:18px}
+.chip.ok{color:var(--cy);border-color:rgba(45,212,191,.35);background:rgba(45,212,191,.06)}
+.chip.warn{color:var(--am);border-color:rgba(240,180,41,.35);background:rgba(240,180,41,.06)}
+.chip.bad{color:var(--rd);border-color:rgba(240,72,62,.35);background:rgba(240,72,62,.06)}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:4px;border:1px solid var(--line2);background:var(--sf2);color:var(--tx);font-size:12px;cursor:pointer;font-family:var(--sans);transition:border-color .15s,color .15s;text-decoration:none}
+.btn:hover{border-color:var(--cy);color:var(--cy)}
+.btn.p{background:var(--cy);border-color:var(--cy);color:#04201C;font-weight:500}
+.btn.p:hover{background:#37e7d2;color:#04201C}
+input,select{background:var(--sf2);border:1px solid var(--line2);border-radius:4px;color:var(--tx);font-size:12px;padding:6px 10px;font-family:var(--mono);outline:none}
+input:focus,select:focus{border-color:var(--cy)}
+label{font-size:11px;color:var(--tx3);font-family:var(--mono);letter-spacing:.04em}
+.stage{display:flex;align-items:center;gap:9px;font-family:var(--mono);font-size:11px;color:var(--tx2);padding:7px 0;border-bottom:1px solid rgba(35,44,59,.5)}
+.stage:last-child{border-bottom:none}
+.stage .n{flex:1}
+.stage .t{color:var(--tx3);font-size:10px}
+.verdict{border:1px solid rgba(45,212,191,.4);background:linear-gradient(135deg,rgba(45,212,191,.07),rgba(45,212,191,.01));border-radius:6px;padding:18px 20px;display:grid;grid-template-columns:repeat(5,1fr);gap:14px}
+.verdict .dir{grid-column:1/-1;display:flex;align-items:center;gap:12px;padding-bottom:12px;border-bottom:1px solid rgba(45,212,191,.18)}
+.verdict .dir .t{font-family:var(--dsp);font-size:26px;font-weight:700;letter-spacing:-.01em;color:var(--cy)}
+.verdict .dir .s{font-size:11px;color:var(--tx2);font-family:var(--mono)}
+.verdict .c label{display:block;margin-bottom:3px}
+.verdict .c .v{font-family:var(--dsp);font-size:19px;font-weight:500}
+.deb{display:grid;grid-template-columns:1fr 1fr;gap:0;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.deb .col{padding:12px 14px}
+.deb .col+.col{border-left:1px solid var(--line)}
+.deb h4{font-size:12px;font-weight:500;margin-bottom:8px;display:flex;align-items:center;gap:7px}
+.deb h4 .d{width:7px;height:7px;border-radius:50%}
+.deb li{list-style:none;font-size:12px;color:var(--tx2);padding:5px 0 5px 14px;position:relative;line-height:1.5}
+.deb li::before{content:'';position:absolute;left:0;top:11px;width:5px;height:1px;background:var(--tx3)}
+.hist .it{padding:8px 10px;border:1px solid var(--line);border-radius:5px;margin-bottom:8px;background:var(--sf2);cursor:pointer;transition:border-color .15s,background .15s}
+.hist .it:hover{border-color:var(--line2);background:var(--sf3)}
+.hist .it.on{border-color:rgba(45,212,191,.5);background:rgba(45,212,191,.06)}
+.hist .it .r1{display:flex;justify-content:space-between;font-family:var(--mono);font-size:11px;color:var(--tx3)}
+.hist .it .r2{font-size:12px;margin-top:3px}
+.hist .pb{max-height:520px;overflow:auto}
+.seg{display:inline-flex;gap:2px;background:var(--sf3);border-radius:4px;padding:2px}
+.seg button{background:none;border:none;color:var(--tx3);font-size:10px;font-family:var(--mono);padding:1px 7px;border-radius:3px;cursor:pointer}
+.seg button.on{background:var(--sf1);color:var(--cy)}
+.kv{display:flex;align-items:baseline;justify-content:space-between;padding:5px 0;font-size:12px;border-bottom:1px solid rgba(35,44,59,.5)}
+.kv:last-child{border-bottom:none}
+.kv .k{color:var(--tx2)}
+.kv .v{font-family:var(--mono)}
+.ft{font-size:10px;color:var(--tx3);font-family:var(--mono);letter-spacing:.05em;padding:2px 4px}
+a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--cy);outline-offset:1px}
+@keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.r{animation:rise .45s cubic-bezier(.16,1,.3,1) both}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+@media (max-width:960px){.app{grid-template-columns:1fr}aside{display:none}.g2{grid-template-columns:1fr}.verdict{grid-template-columns:repeat(2,1fr)}.deb{grid-template-columns:1fr}.deb .col+.col{border-left:none;border-top:1px solid var(--line)}}
+
+.empty{padding:18px 14px;color:var(--tx3);font-size:12px;font-family:var(--mono);text-align:center}
+.bar{height:4px;background:var(--sf3);border-radius:2px;overflow:hidden;margin-top:8px}
+.bar i{display:block;height:100%;background:var(--cy);transition:width .3s}
+/* 运行中：进度条本身也要"在动"。深度分析整段 3~5 分钟，而节点回调之间
+   实测有 20~45 秒空档（择时取市场快照、东财快照连续失败重试）；没有流动感时
+   用户只能看见一根静止的条，判断"卡死了"（2026-10-26 实际反馈）。 */
+.bar i.run{min-width:4px;background-image:linear-gradient(90deg,rgba(255,255,255,0),rgba(255,255,255,.55),rgba(255,255,255,0));
+  background-size:60px 100%;background-repeat:no-repeat;animation:sweep 1.4s linear infinite}
+@keyframes sweep{from{background-position:-60px 0}to{background-position:calc(100% + 60px) 0}}
+.idle{color:var(--am)}
+.row{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}
+.md{padding:2px 0;font-size:12.5px;line-height:1.75;max-height:420px;overflow:auto}
+.md h1,.md h2,.md h3,.md h4{font-size:12.5px;font-weight:500;margin:12px 0 5px;color:var(--tx)}
+.md p{margin:5px 0;color:var(--tx2)}
+.md strong{color:var(--tx);font-weight:500}
+.md ul,.md ol{margin:5px 0 5px 18px;color:var(--tx2)}
+.md li{margin:2px 0}
+.md code{font-family:var(--mono);font-size:11px;background:var(--sf3);padding:1px 5px;border-radius:3px;color:var(--cy)}
+.tabs{display:flex;gap:2px;padding:0 14px;border-bottom:1px solid var(--line);background:var(--sf2)}
+.tabs button{background:none;border:none;border-bottom:2px solid transparent;color:var(--tx3);font-size:12px;padding:7px 12px;cursor:pointer;font-family:var(--sans)}
+.tabs button.on{color:var(--cy);border-bottom-color:var(--cy)}
+.tabs button:hover{color:var(--tx)}
+@media (max-width:960px){.verdict{grid-template-columns:repeat(2,1fr)}.deb{grid-template-columns:1fr}.deb .col+.col{border-left:none;border-top:1px solid var(--line)}}
+</style>
+</head>
+<body>
+<div class="app">
+<aside>
+  <div class="brand"><i>B</i><div><b>bigAagents</b><span>A-SHARE · MULTI-AGENT</span></div></div>
+  <nav class="nav">
+    <a href="index.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1.5" y="1.5" width="5.5" height="5.5" rx="1"/><rect x="9" y="1.5" width="5.5" height="5.5" rx="1"/><rect x="1.5" y="9" width="5.5" height="5.5" rx="1"/><rect x="9" y="9" width="5.5" height="5.5" rx="1"/></svg>仪表盘</a>
+    <a href="screening.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3h12l-4.5 4.5v5L6.5 15.5v-7L2 3z"/></svg>选股</a>
+    <a href="analysis.html" class="on"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="1.8"/><path d="M8 1v2.5M8 12.5V15M1 8h2.5M12.5 8H15"/></svg>深度分析</a>
+    <a href="watch.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1.5 13.5l4-5 3 2 5.5-7.5"/><path d="M11 3h3v3"/></svg>看盘</a>
+    <a href="intel.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="12.5" r="1.5"/><path d="M4.8 9.2a4.4 4.4 0 0 1 6.4 0M2.2 6.2a8.2 8.2 0 0 1 11.6 0"/></svg>情报</a>
+    <a href="desk.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1.5L14.5 5 8 8.5 1.5 5 8 1.5z"/><path d="M1.5 9l6.5 3.5L14.5 9"/></svg>交易台</a>
+    <a href="review.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 1.5h7l3 3v10H3z"/><path d="M10 1.5v3h3"/><path d="M5.5 8h5M5.5 10.5h5"/></svg>每日复盘</a>
+    <a href="research.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 1.5h4M7 1.5v4L3 13h10L9 5.5v-4"/></svg>研究</a>
+    <a href="chat.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 2.5h12v8H8l-3.5 3v-3H2z"/></svg>助手</a>
+    <a href="system.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 4h12M2 8h12M2 12h12"/><circle cx="5" cy="4" r="1.8"/><circle cx="11" cy="8" r="1.8"/><circle cx="7" cy="12" r="1.8"/></svg>系统</a>
+  </nav>
+  <div class="ft">v3 · LOCAL</div>
+</aside>
+<main>
+  <header class="top">
+    <h1>深度分析</h1>
+    <span class="sp"></span>
+    <span class="pill" id="p-state"><span class="dot"></span><span>空闲</span></span>
+    <span class="pill num" id="p-data">—</span>
+  </header>
+  <div class="wrap">
+    <div class="pn r" style="padding:12px 14px">
+      <div class="row">
+        <div style="width:150px"><label>股票代码</label><input id="code" maxlength="6" placeholder="6 位数字"></div>
+        <button class="btn p" id="btn-run">运行分析</button>
+        <button class="btn" id="btn-cancel" disabled>取消</button>
+        <button class="btn" id="btn-export" disabled>导出 Markdown</button>
+        <span style="flex:1"></span>
+        <span id="hint" style="font-size:11px;color:var(--tx3);font-family:var(--mono)"></span>
+      </div>
+    </div>
+    <div class="pn r">
+      <div class="ph"><b>流程</b><span id="prog-note">未运行</span></div>
+      <div class="pb" style="padding-top:6px;padding-bottom:6px">
+        <div id="prog-msg" class="num" style="font-size:11px;color:var(--tx2)">—</div>
+        <div class="bar"><i id="prog-bar" style="width:0"></i></div>
+        <div id="prog-live" class="num" style="font-size:10.5px;color:var(--tx3);margin-top:6px;font-family:var(--mono)"></div>
+        <div id="nodes" style="margin-top:10px"><div class="empty">尚无运行记录</div></div>
+      </div>
+    </div>
+    <div class="g2 r" style="animation-delay:.05s">
+      <div style="display:flex;flex-direction:column;gap:14px;min-width:0">
+        <div id="verdict-box"></div>
+        <div class="pn">
+          <div class="ph"><b>报告</b><span id="rep-note">—</span></div>
+          <div class="tabs" id="rep-tabs">
+            <button class="on" data-k="tech_report">技术面</button>
+            <button data-k="fundamental_report">基本面</button>
+            <button data-k="news_report">舆情</button>
+            <button data-k="research_summary">研究汇总</button>
+            <button data-k="final_decision">最终决策</button>
+          </div>
+          <div class="pb"><div class="md" id="rep-body"><div class="empty">尚无报告</div></div></div>
+        </div>
+        <div class="pn">
+          <div class="ph"><b>多空辩论</b><span id="deb-note">—</span></div>
+          <div class="deb">
+            <div class="col"><h4><span class="d" style="background:var(--rd)"></span>多方</h4><ul id="bull"><li class="flat">—</li></ul></div>
+            <div class="col"><h4><span class="d" style="background:var(--gn)"></span>空方</h4><ul id="bear"><li class="flat">—</li></ul></div>
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <div class="pn">
+          <div class="ph"><b>输入与审计</b><span>缺就是缺</span></div>
+          <div class="pb" id="audit-body"><div class="empty">选一只股票开始分析 · 这里会列出本次分析的每项数据出处与缺失项</div></div>
+        </div>
+        <div class="pn">
+          <div class="ph"><b>往期胜率</b><span class="seg" id="stats-tabs">
+            <button class="on" data-h="5">T+5</button><button data-h="20">T+20</button>
+          </span></div>
+          <div class="pb" id="stats-body"><div class="empty">—</div></div>
+        </div>
+        <div class="pn hist">
+          <div class="ph"><b>分析历史</b><span id="hist-note">点条目回看</span></div>
+          <div class="pb" id="hist-body"><div class="empty">—</div></div>
+        </div>
+      </div>
+    </div>
+    <div class="ft" id="ft">连接 API 中…</div>
+  </div>
+</main>
+</div>
+<script src="../static/js/md.js"></script>
+<script src="../static/js/demo.js"></script>
+<script>
+(() => {
+  const $ = (s) => document.querySelector(s);
+  const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const get = (u) => fetch(u, {cache: 'no-store'}).then(r => r.json());
+  const post = (u) => fetch(u, {method: 'POST'}).then(r => r.json());
+  const ERR = {missing:'无数据', empty:'解析失败', invalid:'参数非法', offline:'离线', stale:'已有任务在跑', auth:'鉴权失败', proxy:'网络不可达', timeout:'超时'};
+  const errText = (e) => (ERR[e && e.type] || (e && (e.detail || e.type)) || '不可用');
+  const num = (v, d = 2) => (v == null || !isFinite(v)) ? '—'
+    : Number(v).toLocaleString('en-US', {minimumFractionDigits: d, maximumFractionDigits: d});
+
+  let task = '';
+  let snapshot = null;
+  let seenNodes = [];
+  let timer = null;
+  let repKey = 'tech_report';
+  // 回看态：非空表示正在看某条历史，轮询不得用实时快照覆盖它
+  let viewingId = null;
+  let statsHorizon = 5;
+  // applySnapshot 只拿到 snapshot，事后结果要单独传，避免把它混进 snapshot 污染导出
+  let outcome = null;
+
+  // ---------------------------------------------------------------- 决策卡
+  const DIR_CLASS = {'看多': 'up', '看空': 'dn', '观望': 'flat'};
+
+  // 事后结果只出现在**回看**里（实时分析还没走完 T+N 窗口，没有这个数据）
+  function outcomeRow(o) {
+    if (!o) return '';
+    const chipRet = (tag, v) => v == null
+      ? '<span class="chip">' + tag + ' —</span>'
+      : '<span class="chip" style="color:' + (v > 0 ? 'var(--rd)' : (v < 0 ? 'var(--gn)' : 'var(--tx2)')) +
+        '">' + tag + ' ' + (v > 0 ? '+' : '') + Number(v).toFixed(2) + '%</span>';
+    const bits = [chipRet('T+5', o.ret_5d), chipRet('T+20', o.ret_20d)];
+    if (o.hit_target) bits.push('<span class="chip warn">达标</span>');
+    if (o.hit_stop) bits.push('<span class="chip bad">止损</span>');
+    if (!o.backfill_status && o.ret_5d == null) bits.push('<span class="chip">未回填</span>');
+    return '<div class="stage" style="margin-top:10px;border-bottom:none;padding-bottom:0">' +
+      '<span class="n">事后结果</span><span style="display:flex;gap:6px;flex-wrap:wrap">' +
+      bits.join('') + '</span></div>';
+  }
+
+  function renderVerdict(s) {
+    const plan = s.trade_plan || {};
+    const dir = String(plan.direction || '').trim() || '—';
+    const cls = DIR_CLASS[dir] || 'flat';
+    const cards = [
+      ['入场价', plan.entry_price != null ? num(plan.entry_price) : '—'],
+      ['止损', plan.stop_loss != null ? num(plan.stop_loss) : '—'],
+      ['目标', plan.target_price != null ? num(plan.target_price) : '—'],
+      ['仓位', plan.position_size || '—'],
+      ['盈亏比', plan.risk_reward != null ? num(plan.risk_reward, 1) + ' : 1' : '—'],
+    ];
+    const conds = (plan.entry_conditions || []);
+    $('#verdict-box').innerHTML =
+      '<div class="verdict"><div class="dir">' +
+      '<span class="t ' + cls + '">' + esc(dir) + ' · ' + esc(plan.advice_status || '未标注') + '</span>' +
+      '<span class="s">方向由 mechanical_verdict 判定</span><span style="flex:1"></span>' +
+      '<span class="chip">数据 ' + esc(s.data_through || s.analysis_date || '—') + '</span></div>' +
+      cards.map(([k, v]) => '<div class="c"><label>' + k + '</label><div class="v num">' + esc(v) + '</div></div>').join('') +
+      '</div>' +
+      (plan.advice ? '<div class="pn" style="margin-top:12px"><div class="ph"><b>交易建议</b><span>' +
+        esc(plan.holding_period || '') + '</span></div><div class="pb" style="font-size:12px;color:var(--tx2);line-height:1.7">' +
+        esc(plan.advice) + (plan.reasoning ? '<div style="margin-top:8px;color:var(--tx3);font-size:11px">' +
+        esc(plan.reasoning) + '</div>' : '') + '</div></div>' : '') +
+      (conds.length ? '<div class="pn" style="margin-top:12px"><div class="ph"><b>入场条件</b><span>' +
+        conds.length + ' 条</span></div><div class="pb"><ul style="list-style:none;font-size:12px;color:var(--tx2);line-height:1.7">' +
+        conds.map((c, i) => '<li style="padding:4px 0 4px 18px;position:relative"><span style="position:absolute;left:0;color:var(--cy);font-family:var(--mono);font-size:10px">' +
+        (i + 1) + '</span>' + esc(c) + '</li>').join('') + '</ul></div></div>' : '') +
+      outcomeRow(outcome);
+  }
+
+  function renderReport(s) {
+    const txt = s[repKey] || '';
+    $('#rep-body').innerHTML = txt ? bigaMd(txt) : '<div class="empty">本节为空</div>';
+    $('#rep-note').textContent = (s.stock_name || '') + ' ' + (s.stock_code || '') +
+      (txt ? ' · ' + txt.length + ' 字符' : '');
+  }
+
+  function bullets(arr) {
+    if (!arr || !arr.length) return '<li class="flat">—</li>';
+    const last = String(arr[arr.length - 1] || '');
+    // 辩论是整段长文：取段落拆成条目，超过 600 字截断（内容仍在"报告"页可读全）
+    const parts = last.split(/\n{2,}|\n[-*]\s+/).map(x => x.trim()).filter(Boolean);
+    const use = (parts.length > 1 ? parts : [last]).slice(0, 6);
+    return use.map(t => '<li>' + esc(t.slice(0, 220)) + (t.length > 220 ? '…' : '') + '</li>').join('');
+  }
+
+  function renderDebate(s) {
+    const b = s.bull_history || [], r = s.bear_history || [];
+    $('#bull').innerHTML = bullets(b);
+    $('#bear').innerHTML = bullets(r);
+    $('#deb-note').textContent = b.length + ' / ' + r.length + ' 轮';
+  }
+
+  function renderAudit(s) {
+    const av = s.data_availability || {};
+    const keys = Object.keys(av);
+    const miss = keys.filter(k => !av[k]);
+    const rows = [];
+    rows.push(['输入项', keys.length ? (keys.length - miss.length) + '/' + keys.length + ' 已取到' : '—']);
+    if (miss.length) rows.push(['缺失', '<span class="chip bad">' + esc(miss.join('、')) + '</span>']);
+    const warn = s.audit_warnings || [];
+    rows.push(['可核实性告警', warn.length
+      ? '<span class="chip warn">' + warn.length + ' 条</span>'
+      : '<span class="chip ok">无</span>']);
+    const errs = (s.errors || []).filter(e => !/可核实性/.test(String(e)));
+    rows.push(['执行告警', errs.length ? '<span class="chip warn">' + errs.length + ' 条</span>'
+      : '<span class="chip ok">无</span>']);
+    rows.push(['分析日 / 数据截止', '<span style="font-size:11px">' +
+      esc(s.analysis_date || '—') + ' / ' + esc(s.data_through || '—') + '</span>']);
+
+    let html = rows.map(([k, v]) =>
+      '<div class="stage"><span class="n">' + k + '</span><span>' + v + '</span></div>').join('');
+    const notes = warn.concat(errs).slice(0, 4);
+    if (notes.length) {
+      html += '<div style="margin-top:8px;font-size:10.5px;color:var(--tx3);font-family:var(--mono);line-height:1.6">' +
+        notes.map(t => '· ' + esc(String(t).slice(0, 120))).join('<br>') + '</div>';
+    }
+    $('#audit-body').innerHTML = html;
+  }
+
+  function markHistActive() {
+    document.querySelectorAll('#hist-body .it').forEach(el => {
+      el.classList.toggle('on', String(el.dataset.id) === String(viewingId));
+    });
+  }
+
+  function renderHistory(rows) {
+    const body = $('#hist-body');
+    if (!rows || !rows.length) {
+      body.innerHTML = '<div class="empty">暂无记录</div>';
+      $('#hist-note').textContent = '0 条';
+      return;
+    }
+    $('#hist-note').textContent = rows.length + ' 条 · 点条目回看';
+    body.innerHTML = rows.map(r => {
+      const has5 = r.ret_5d != null;
+      const ret = has5 ? r.ret_5d : r.ret_20d;
+      const cls = ret == null ? 'flat' : (ret > 0 ? 'up' : 'dn');
+      const retTxt = ret == null ? '—'
+        : ((ret > 0 ? '+' : '') + Number(ret).toFixed(2) + '%');
+      return '<div class="it' + (String(viewingId) === String(r.id) ? ' on' : '') +
+        '" data-id="' + esc(r.id) + '" role="button" tabindex="0">' +
+        '<div class="r1"><span>' + esc(r.name || '') + ' ' + esc(r.code || '') + '</span>' +
+        '<span class="' + (DIR_CLASS[r.decision] || 'flat') + '">' + esc(r.decision || '—') + '</span></div>' +
+        '<div class="r2 num" style="font-size:11px;color:var(--tx3)">' + esc(r.date || '') +
+        (r.price != null ? ' · ' + num(r.price) : '') +
+        ' · T+5 <span class="' + cls + '">' + esc(retTxt) + '</span>' +
+        (r.hit_stop ? ' <span class="chip bad">止损</span>' : '') + '</div></div>';
+    }).join('');
+  }
+
+  // ---------------------------------------------------------------- 往期胜率
+  function renderStats(z) {
+    const body = $('#stats-body');
+    if (!z.ok) { body.innerHTML = '<div class="empty">' + errText(z.error) + '</div>'; return; }
+    const d = z.data;
+    const rate = d.win_rate_pct;
+    const rows = [
+      ['命中率', rate == null ? '—'
+        : rate.toFixed(1) + '% · ' + d.directional + ' 条'],
+      ['判对 / 判错', d.hit + ' / ' + d.miss],
+      ['未走出 ±3%', String(d.unclear)],
+      ['观望（不计入）', String(d.no_position)],
+      ['样本', d.total_reviewed + ' 条 · ' + d.days + ' 天'],
+    ];
+    let html = rows.map(r =>
+      '<div class="kv"><span class="k">' + r[0] + '</span><span class="v">' + esc(r[1]) + '</span></div>').join('');
+    if (rate == null) {
+      html += '<div class="empty" style="padding:10px 0 0">还没有可判定的样本</div>';
+    }
+    const causes = (d.by_cause || []).slice(0, 3);
+    if (causes.length) {
+      html += '<div style="margin-top:10px;margin-bottom:2px;font-size:10px;color:var(--tx3);font-family:var(--mono)">主要原因</div>' +
+        causes.map(c => '<div class="kv"><span class="k" style="font-size:11px">' +
+          esc(c.label || c.code) + '</span><span class="v" style="font-size:11px">' + c.count +
+          (c.share != null ? ' · ' + Math.round(c.share * 100) + '%' : '') + '</span></div>').join('');
+    }
+    body.innerHTML = html;
+  }
+
+  function loadStats() {
+    return get('/api/analysis/stats?days=180&horizon=' + statsHorizon)
+      .then(renderStats)
+      .catch(() => { $('#stats-body').innerHTML = '<div class="empty">API 不可达</div>'; });
+  }
+
+  // ---------------------------------------------------------------- 回看
+  function openDetail(id) {
+    return get('/api/analysis/detail/' + encodeURIComponent(id)).then(z => {
+      if (!z.ok) { $('#hint').textContent = errText(z.error); return; }
+      viewingId = z.data.id;
+      outcome = z.data.outcome || null;
+      // ⚠️ 回看期间必须停轮询：否则 2s 后的实时快照会盖掉这份历史，
+      //    表现成"点了历史、闪一下就变回去"——会被当成点击没生效。
+      stopPolling();
+      $('#prog-live').textContent = '';
+      applySnapshot(z.data.snapshot);
+      markHistActive();
+      const meta = z.data.meta || {};
+      $('#hint').textContent = '回看 · ' + String(meta.created_at || '').slice(0, 16);
+    }).catch(() => { $('#hint').textContent = 'API 不可达'; });
+  }
+
+  // ---------------------------------------------------------------- 进度
+  function renderTask(z) {
+    if (!z.ok) {
+      $('#prog-msg').textContent = errText(z.error);
+      return;
+    }
+    const p = z.data.progress || {};
+    const running = !!z.data.running;
+    $('#btn-run').disabled = running;
+    $('#btn-cancel').disabled = !running;
+    $('#p-state').innerHTML = '<span class="dot' + (running ? ' am' : (z.data.status === 'error' ? ' rd' : '')) +
+      '"></span><span>' + (running ? '分析中' : (z.data.status === 'error' ? '失败' : '空闲')) + '</span>';
+    $('#prog-note').textContent = running ? '运行中' : (z.data.status || '未运行');
+    // 已用时长：running 时用后端现算的 elapsed_live（秒数一直在走）；
+    // ⚠️ 不能只用 progress.elapsed —— 它只在节点回调时写一次，实测启动后
+    //    44 秒里恒为 0，页面就变成「准备中…（已用 0s）」冻住，看着像死机。
+    const el = running && z.data.elapsed_live != null ? z.data.elapsed_live : p.elapsed;
+    $('#prog-msg').textContent = (p.message || '—') +
+      (el != null ? ' · 已用 ' + Math.round(el) + 's' : '');
+
+    // 活性提示：节点之间实测有 20~45 秒空档。把"多久没更新"直接写出来，
+    // 用户就不用靠猜——静止的进度条本身无法区分"在算"和"死了"。
+    const live = $('#prog-live');
+    const idle = z.data.idle_seconds;
+    if (running) {
+      const bits = [];
+      if (idle != null) bits.push('最后更新 ' + Math.round(idle) + 's 前');
+      if (idle != null && idle >= 45) bits.push('该步骤较慢，仍在运行');
+      live.textContent = bits.join(' · ');
+      live.style.color = (idle != null && idle >= 45) ? 'var(--am)' : 'var(--tx3)';
+    } else {
+      live.textContent = '';
+    }
+
+    const pct = Number(p.percent || 0);
+    $('#prog-bar').style.width = Math.min(100, Math.max(0, pct)) + '%';
+    $('#prog-bar').className = running ? 'run' : '';
+    $('#prog-bar').style.background = z.data.status === 'error' ? 'var(--rd)' : (running ? 'var(--am)' : 'var(--cy)');
+
+    const node = p.node;
+    if (node && seenNodes.indexOf(node) < 0) seenNodes.push(node);
+    // 运行中但还没走完第一个节点时，写"尚无运行记录"是错的——那时正卡在
+    // 择时/取数（实测可达 44 秒），用户会以为根本没开始。
+    $('#nodes').innerHTML = seenNodes.length ? seenNodes.map((n, i) =>
+      '<div class="stage"><span class="n">' + esc(n) + '</span><span class="chip ok">done</span></div>').join('')
+      : '<div class="empty">' + (running ? '正在准备（取行情 / 判市场状态）…' : '尚无运行记录') + '</div>';
+
+    // 渐进式渲染：边跑边显示已完成的节点快照
+    if (p.snapshot) applySnapshot(p.snapshot);
+    if (z.data.result) applySnapshot(z.data.result);
+    if (p.status === 'error') {
+      $('#prog-msg').textContent = '失败：' + (p.message || '');
+      $('#prog-msg').style.color = 'var(--rd)';
+    } else {
+      $('#prog-msg').style.color = '';
+    }
+  }
+
+  function applySnapshot(s) {
+    snapshot = s;
+    $('#btn-export').disabled = false;
+    $('#p-data').textContent = '数据 ' + (s.data_through || s.analysis_date || '—');
+    renderVerdict(s); renderReport(s); renderDebate(s); renderAudit(s);
+    $('#hint').textContent = (s.stock_name || '') + ' · ' + (s.stock_code || '');
+  }
+
+  // ---------------------------------------------------------------- 轮询
+  function poll() {
+    if (!task) return Promise.resolve(null);
+    return get('/api/analysis/' + encodeURIComponent($('#code').value.trim())).then(z => {
+      // ⚠️ 顺序要紧：**先判"结束"再渲染**。原写法把 stopPolling 放在 renderTask
+      //    之后，而整条链被 `.catch(() => null)` 吞掉——只要渲染抛一次异常
+      //    （某个字段类型不符、某个 DOM id 改了），stopPolling 就永远执行不到，
+      //    2s 一次的轮询会无限空转，页面定格在最后一个快照上且毫无提示。
+      //    这正是"后端已完成、页面还在转"的成因，与"任务真的卡住"无法区分。
+      if (z.ok && !z.data.running) stopPolling();
+      try {
+        renderTask(z);
+      } catch (e) {
+        stopPolling();
+        $('#prog-msg').textContent = '渲染失败：' + ((e && e.message) || e);
+        $('#prog-msg').style.color = 'var(--rd)';
+      }
+      return z;
+    }).catch(() => null);
+  }
+  function startPolling() {
+    if (timer) return;
+    timer = setInterval(poll, 2000);
+  }
+  function stopPolling() { if (timer) { clearInterval(timer); timer = null; } }
+
+  // ---------------------------------------------------------------- 历史
+  // ⚠️ 历史列表**始终拉全量**：回看的意义是"任何一条都能打开"。按 code 过滤会让
+  //    人误以为更早的记录丢了（上一版本还有 slice(0,8)，同样问题）。
+  function loadHistory() {
+    return get('/api/analysis/history?limit=200')
+      .then(z => { if (z.ok) renderHistory(z.data.rows); });
+  }
+
+  // ---------------------------------------------------------------- 导出
+  function exportMd() {
+    if (!snapshot) return;
+    const s = snapshot;
+    const plan = s.trade_plan || {};
+    const parts = [
+      '# ' + (s.stock_name || '') + '（' + (s.stock_code || '') + '）深度分析',
+      '',
+      '- 分析日：' + (s.analysis_date || '—') + '｜数据截止：' + (s.data_through || '—'),
+      '- 方向：' + (plan.direction || '—') + '｜仓位：' + (plan.position_size || '—'),
+      '',
+      '## 技术面', '', s.tech_report || '（空）', '',
+      '## 基本面', '', s.fundamental_report || '（空）', '',
+      '## 舆情', '', s.news_report || '（空）', '',
+      '## 研究汇总', '', s.research_summary || '（空）', '',
+      '## 交易计划', '', '```json', JSON.stringify(plan, null, 2), '```', '',
+      '## 最终决策', '', s.final_decision || '（空）', '',
+    ];
+    const blob = new Blob([parts.join('\n')], {type: 'text/markdown;charset=utf-8'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = (s.stock_code || 'analysis') + '_' + (s.analysis_date || '') + '.md';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  // ---------------------------------------------------------------- 动作
+  $('#btn-run').addEventListener('click', () => {
+    const code = $('#code').value.trim();
+    if (!/^\d{6}$/.test(code)) { $('#hint').textContent = '代码必须是 6 位数字'; return; }
+    // 离开回看态：不清的话，新的实时结果会顶着上一份历史的"事后结果"数字
+    viewingId = null;
+    outcome = null;
+    markHistActive();
+    seenNodes = [];
+    $('#nodes').innerHTML = '<div class="empty">排队中…</div>';
+    $('#btn-run').disabled = true;
+    post('/api/analysis/' + code).then(z => {
+      if (!z.ok) { $('#prog-msg').textContent = errText(z.error); $('#btn-run').disabled = false; return; }
+      task = code;
+      startPolling();
+      poll();
+      loadHistory();
+    }).catch(() => { $('#prog-msg').textContent = 'API 不可达'; $('#btn-run').disabled = false; });
+  });
+
+  $('#btn-cancel').addEventListener('click', () => {
+    post('/api/tasks/web_analysis_' + $('#code').value.trim() + '/cancel').then(z => {
+      $('#prog-msg').textContent = z.ok ? '已请求取消' : errText(z.error);
+    });
+  });
+
+  $('#btn-export').addEventListener('click', exportMd);
+
+  // 历史条目用事件委托：列表会整块重建，逐个绑 listener 会随每次刷新泄漏
+  $('#hist-body').addEventListener('click', (e) => {
+    const it = e.target.closest('.it[data-id]');
+    if (it) openDetail(it.dataset.id);
+  });
+  $('#hist-body').addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const it = e.target.closest('.it[data-id]');
+    if (it) { e.preventDefault(); openDetail(it.dataset.id); }
+  });
+
+  document.querySelectorAll('#stats-tabs button').forEach(b => {
+    b.addEventListener('click', () => {
+      document.querySelectorAll('#stats-tabs button').forEach(x => x.classList.remove('on'));
+      b.classList.add('on');
+      statsHorizon = Number(b.dataset.h || 5);
+      loadStats();
+    });
+  });
+
+  document.querySelectorAll('#rep-tabs button').forEach(b => {
+    b.addEventListener('click', () => {
+      document.querySelectorAll('#rep-tabs button').forEach(x => x.classList.remove('on'));
+      b.classList.add('on');
+      repKey = b.dataset.k;
+      if (snapshot) renderReport(snapshot);
+    });
+  });
+
+  // ---------------------------------------------------------------- 启动
+  const qs = new URLSearchParams(location.search);
+  const initCode = (qs.get('code') || '').trim();
+  if (/^\d{6}$/.test(initCode)) $('#code').value = initCode;
+
+  loadStats();
+  Promise.all([get('/api/meta'), get('/api/analysis/history?limit=200')])
+    .then(([meta, hist]) => {
+      if (meta.ok) $('#ft').textContent = 'API ' + meta.data.version + ' · 分析历史 ' +
+        ((hist.ok ? hist.data.total : 0)) + ' 条';
+      if (hist.ok) renderHistory(hist.data.rows);
+      if (!initCode) return;
+      // 带上 ?code= 直接看这只票的最近一次结果
+      return get('/api/analysis/' + encodeURIComponent(initCode)).then(z => {
+        task = initCode;
+        if (z.ok && z.data.result) applySnapshot(z.data.result);
+        renderTask(z);
+        if (z.ok && z.data.running) startPolling();
+      });
+    })
+    .catch(() => { $('#ft').textContent = 'API 不可达'; });
+})();
+</script>
+</body>
+</html>

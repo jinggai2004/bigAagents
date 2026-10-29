@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "name": "阿深",
+  "states": {
+    "premarket": {
+      "label": "盘前准备",
+      "spot": "coffee",
+      "anim": "stand",
+      "lines": ["泡杯咖啡，看看隔夜外盘……纳指又新高了？", "开盘前再核对一遍自选股清单。"]
+    },
+    "meeting": {
+      "label": "晨会",
+      "spot": "whiteboard",
+      "anim": "stand",
+      "lines": ["今日计划：控制仓位，只做确定性的。", "出门前看一眼巴菲特的照片，沾沾价值投资的气。"]
+    },
+    "watch_am": {
+      "label": "盯盘（上午）",
+      "spot": "desk",
+      "anim": "type",
+      "lines": ["9:30 开盘了，精神起来！", "量能有点虚，再观察一下。"]
+    },
+    "lunch": {
+      "label": "午休",
+      "spot": "sofa",
+      "anim": "sit",
+      "lines": ["午饭吃什么呢……外卖还是泡面？", "午休时间来一局！"]
+    },
+    "watch_pm": {
+      "label": "盯盘（下午）",
+      "spot": "desk",
+      "anim": "type",
+      "lines": ["下午开盘，别打瞌睡。", "这个回踩有点意思……"]
+    },
+    "review": {
+      "label": "复盘",
+      "spot": "desk",
+      "anim": "type",
+      "lines": ["收盘了，写今天的复盘……", "今天这笔操作，值得记一笔。"]
+    },
+    "offduty": {
+      "label": "自由活动",
+      "spot": "random",
+      "anim": "wander",
+      "lines": ["下班！今天也不亏了（大概）。", "终于自由了，做点什么好呢。", "出去逛逛，晚点回来。", "看点闲书，别聊股票。"]
+    },
+    "sleep": {
+      "label": "睡觉",
+      "spot": "bed",
+      "anim": "sleep",
+      "lines": ["zzz……", "（睡得很香）"]
+    }
+  },
+  "timetable": [
+    { "days": "trading", "start": "08:30", "end": "09:15", "state": "premarket" },
+    { "days": "trading", "start": "09:15", "end": "09:30", "state": "meeting" },
+    { "days": "trading", "start": "09:30", "end": "11:30", "state": "watch_am" },
+    { "days": "trading", "start": "11:30", "end": "13:00", "state": "lunch" },
+    { "days": "trading", "start": "13:00", "end": "15:00", "state": "watch_pm" },
+    { "days": "trading", "start": "15:00", "end": "16:30", "state": "review" },
+    { "days": "trading", "start": "16:30", "end": "22:00", "state": "offduty" },
+    { "days": "all", "start": "22:00", "end": "29:59", "state": "sleep" },
+    { "days": "all", "start": "00:00", "end": "08:30", "state": "sleep" },
+    { "days": "nontrading", "start": "08:30", "end": "22:00", "state": "offduty" }
+  ],
+  "spots": {
+    "desk":      { "pos": [0.55, 0, -1.55], "face": 3.14159 },
+    "whiteboard":{ "pos": [-1.55, 0, -1.95], "face": 3.14159 },
+    "coffee":    { "pos": [1.75, 0, -2.05], "face": 3.14159 },
+    "bed":       { "pos": [-2.05, 0, 1.05], "face": 1.5708 },
+    "sofa":      { "pos": [1.78, 0.32, 0.72], "face": -0.7854 },
+    "window":    { "pos": [2.35, 0, -0.55], "face": 1.5708 },
+    "door":      { "pos": [-2.85, 0, -0.55], "face": -1.5708 }
+  }
+}

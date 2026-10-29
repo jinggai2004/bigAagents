@@ -1,0 +1,32 @@
+{
+  "version": 5,
+  "models": {
+    "client.technical_analysis": "qwen3.7-flash",
+    "client.fundamental_analysis": "qwen3.7-flash",
+    "agents.news": "qwen3.7-flash",
+    "agents.bull": "qwen3.7-flash",
+    "agents.bear": "qwen3.7-flash",
+    "agents.research_manager": "deepseek-v4-flash",
+    "agents.trader": "deepseek-v4-flash",
+    "agents.risk_manager": "deepseek-v4-flash",
+    "agents.portfolio_manager": "deepseek-v4-flash",
+    "news_industry.review": "qwen3.7-flash",
+    "ui.zhihu_summary": "qwen3.7-flash",
+    "nl_screener.parse": "deepseek-v4-flash",
+    "config.test": "deepseek-v4-flash",
+    "chat.tool_loop": "deepseek-v4-flash",
+    "chat.tool_loop_summary": "deepseek-v4-flash",
+    "market_opinions": "qwen-max",
+    "analysis.review": "deepseek-v4-flash",
+    "sentiment.judge": "deepseek-v4-flash",
+    "sentiment.label": "deepseek-v4-flash",
+    "chat.deep": "deepseek-v4-pro",
+    "review.daily": "deepseek-v4-pro",
+    "ai.*.decision": "deepseek-v4-flash",
+    "ai.*.wake": "deepseek-v4-flash",
+    "ai.*.routine": "deepseek-v4-flash",
+    "ai.*.chat": "deepseek-v4-flash",
+    "dev.verify.*": "deepseek-v4-flash",
+    "verify.model": "deepseek-v4-flash"
+  }
+}

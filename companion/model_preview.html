@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>阿深 glb 素模 vs 叠层（验证用）</title>
+<style>html,body{margin:0;height:100%;background:#181C24;overflow:hidden}#c{display:block}</style>
+<script type="importmap">
+  { "imports": { "three": "./vendor/three.module.js" } }
+</script>
+</head>
+<body>
+<script type="module">
+import * as THREE from 'three';
+import { ModelGirl } from './js/modelgirl.js';
+
+// 目的只有一个：判断"脸"到底是谁画的。
+//   ?layers=1（默认）保留 facePlane + blushPlane —— 用户现在看到的样子
+//   ?layers=0        把两层都藏掉 —— 露出 glb 本体
+// 如果 layers=0 时脸上还有眼睛和腮红，说明模型自带五官，那叠加层就是重复画，
+// 只会在原脸上糊一层粉色和一张对不齐的嘴；反之就必须重做贴图。
+const Q = new URLSearchParams(location.search);
+const LAYERS = Q.get('layers') !== '0';
+const EMOTION = Q.get('emotion') || 'neutral';
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(2);
+renderer.setSize(480, 480);
+renderer.domElement.id = 'c';
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x181C24);
+scene.add(new THREE.AmbientLight(0xFFFFFF, 1.0));
+const key = new THREE.DirectionalLight(0xFFF2DD, 1.0); key.position.set(0.5, 1.2, 1.5); scene.add(key);
+const fill = new THREE.DirectionalLight(0xCFE4FF, 0.45); fill.position.set(-0.9, 0.4, 1.0); scene.add(fill);
+
+const girl = await ModelGirl.create(scene, './assets/ashen.glb');
+girl.setMode('stand');
+girl.setEmotion(EMOTION, 99);      // 锁住表情，别被 syncEmotion 立刻覆盖
+if (!LAYERS) {
+  girl.facePlane.visible = false;
+  girl.blushPlane.visible = false;
+}
+
+// 头的位置：模型总高 1.35，脸在 68% 高度附近（_buildFace 的 faceY）
+const faceY = 1.35 * 0.68;
+const camera = new THREE.PerspectiveCamera(26, 1, 0.02, 10);  // 距离 2.0 ⇒ 可见高度≈0.92，够放整张脸
+camera.position.set(0, faceY + 0.05, 2.0);
+camera.lookAt(0, faceY, 0);
+
+function loop() {
+  girl.update(0.016);
+  renderer.render(scene, camera);
+  requestAnimationFrame(loop);
+}
+loop();
+
+window.__face = () => ({
+  layers: LAYERS, emotion: girl.emotion,
+  faceVisible: !!(girl.facePlane && girl.facePlane.visible),
+  blushVisible: !!(girl.blushPlane && girl.blushPlane.visible),
+  facePlane: girl.facePlane && {
+    w: girl.facePlane.geometry.parameters.width,
+    h: girl.facePlane.geometry.parameters.height,
+    y: +girl.facePlane.parent.position.y.toFixed(3),
+    z: +girl.facePlane.position.z.toFixed(3),
+  },
+  blushPlane: girl.blushPlane && {
+    w: girl.blushPlane.geometry.parameters.width,
+    h: girl.blushPlane.geometry.parameters.height,
+    opacity: girl.blushPlane.material.opacity,
+  },
+  // mesh 有没有贴图：没有 ⇒ 脸是纯色/顶点色，五官只能靠叠加层画
+  meshHasMap: !!(girl.mesh && girl.mesh.material && girl.mesh.material.map),
+  vertexColors: !!(girl.mesh && girl.mesh.geometry && girl.mesh.geometry.attributes.color),
+});
+document.documentElement.dataset.ready = '1';
+</script>
+</body>
+</html>

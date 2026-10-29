@@ -1,0 +1,12 @@
+# 换行规范：仓库内统一 LF，checkout 时 bat 强制 CRLF（cmd 对 LF+goto 有解析故障）
+* text=auto
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 二进制
+*.png binary
+*.ico binary
+*.jpg binary
+*.lnk binary
+*.parquet binary
+*.db binary

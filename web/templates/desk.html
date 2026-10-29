@@ -1,0 +1,792 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>交易台 · bigAagents</title>
+<link rel="stylesheet" href="../static/fonts/fonts.css">
+<link rel="stylesheet" href="../static/css/theme.css">
+</head>
+<body>
+<div class="app">
+<aside>
+  <div class="brand"><i>B</i><div><b>bigAagents</b><span>A-SHARE · MULTI-AGENT</span></div></div>
+  <nav class="nav">
+    <a href="index.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1.5" y="1.5" width="5.5" height="5.5" rx="1"/><rect x="9" y="1.5" width="5.5" height="5.5" rx="1"/><rect x="1.5" y="9" width="5.5" height="5.5" rx="1"/><rect x="9" y="9" width="5.5" height="5.5" rx="1"/></svg>仪表盘</a>
+    <a href="screening.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3h12l-4.5 5.5v5L6.5 15.5v-7L2 3z"/></svg>选股</a>
+    <a href="analysis.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="1.8"/><path d="M8 1v2.5M8 12.5V15M1 8h2.5M12.5 8H15"/></svg>深度分析</a>
+    <a href="watch.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1.5 13.5l4-5 3 2 5.5-7.5"/><path d="M11 3h3v3"/></svg>看盘</a>
+    <a href="intel.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="12.5" r="1.5"/><path d="M4.8 9.2a4.4 4.4 0 0 1 6.4 0M2.2 6.2a8.2 8.2 0 0 1 11.6 0"/></svg>情报</a>
+    <a href="desk.html" class="on"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1.5L14.5 5 8 8.5 1.5 5 8 1.5z"/><path d="M1.5 9l6.5 3.5L14.5 9"/></svg>交易台</a>
+    <a href="review.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 1.5h7l3 3v10H3z"/><path d="M10 1.5v3h3"/><path d="M5.5 8h5M5.5 10.5h5"/></svg>每日复盘</a>
+    <a href="research.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 1.5h4M7 1.5v4L3 13h10L9 5.5v-4"/></svg>研究</a>
+    <a href="chat.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 2.5h12v8H8l-3.5 3v-3H2z"/></svg>助手</a>
+    <a href="system.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 4h12M2 8h12M2 12h12"/><circle cx="5" cy="4" r="1.8"/><circle cx="11" cy="8" r="1.8"/><circle cx="7" cy="12" r="1.8"/></svg>系统</a>
+  </nav>
+  <div class="ft">v3 · LOCAL</div>
+</aside>
+<main>
+  <header class="top">
+    <h1>交易台</h1>
+    <span class="sp"></span>
+    <span class="pill"><span class="dot"></span>收盘价估值</span>
+    <span class="pill num" id="top-date">数据 —</span>
+  </header>
+  <div class="wrap">
+    <div class="g4 r">
+      <div class="kpi"><label>总资产</label><div class="v num" id="k-total">—</div><div class="d num flat" id="k-total-sub">—</div></div>
+      <div class="kpi"><label>持仓市值</label><div class="v num" id="k-mv">—</div><div class="d num flat" id="k-mv-sub">—</div></div>
+      <div class="kpi"><label>现金</label><div class="v num" id="k-cash">—</div><div class="d num flat">可用</div></div>
+      <div class="kpi"><label>风控告警</label><div class="v s" id="k-alert">—</div><div class="d num flat" id="k-alert-sub">—</div></div>
+    </div>
+
+    <div class="side r" style="animation-delay:.06s">
+      <div class="pn">
+        <div class="ph"><b>持仓</b><span id="pos-note">—</span></div>
+        <table>
+          <thead><tr><th>代码</th><th>名称</th><th>数量</th><th>成本</th><th>收盘</th><th>市值</th><th>盈亏</th><th>止损</th></tr></thead>
+          <tbody id="pos-body"><tr><td colspan="8" class="empty">读取中…</td></tr></tbody>
+        </table>
+      </div>
+      <div class="pn">
+        <div class="ph"><b>风险与暴露</b><span id="risk-note">—</span></div>
+        <div class="pb" id="risk"><div class="empty">读取中…</div></div>
+      </div>
+    </div>
+
+    <div class="pn r" style="animation-delay:.1s">
+      <div class="ph"><b>AI 联赛</b><span id="league-note">—</span></div>
+      <table>
+        <thead><tr><th>人设</th><th>模型</th><th>净值日</th><th>收益率</th><th>超额</th><th>分位</th><th>状态</th></tr></thead>
+        <tbody id="league-body"><tr><td colspan="7" class="empty">读取中…</td></tr></tbody>
+      </table>
+      <div class="pb" style="border-top:1px solid var(--line)" id="league-foot"></div>
+    </div>
+
+    <div class="pn r" style="animation-delay:.12s">
+      <div class="ph"><b>联赛每日决策与复盘</b>
+        <span class="sel"><select id="ld-date"><option value="">—</option></select></span>
+      </div>
+      <div class="pb" id="ld-body"><div class="empty">读取中…</div></div>
+      <div class="pb" style="border-top:1px solid var(--line)" id="ld-foot"><span class="ft">—</span></div>
+    </div>
+
+    <div class="pn r" style="animation-delay:.13s">
+      <div class="ph"><b>AI 盘中唤醒</b><span id="wk-note">—</span></div>
+      <div class="pb" id="wk-sum"><div class="empty">读取中…</div></div>
+      <div class="pb" style="border-top:1px solid var(--line);padding:0">
+        <table>
+          <thead><tr><th>日期</th><th>时间</th><th>人设</th><th>代码</th><th>触发价</th><th>醒来后</th><th>说明</th></tr></thead>
+          <tbody id="wk-body"><tr><td colspan="7" class="empty">读取中…</td></tr></tbody>
+        </table>
+      </div>
+      <div class="pb" style="border-top:1px solid var(--line)">
+        <details>
+          <summary id="wk-cond-sum">埋着的触发条件 —</summary>
+          <table style="margin-top:10px">
+            <thead><tr><th>人设</th><th>代码</th><th>类型</th><th>阈值</th><th>备注（AI 自己写的理由）</th></tr></thead>
+            <tbody id="wk-cond"><tr><td colspan="5" class="empty">读取中…</td></tr></tbody>
+          </table>
+        </details>
+      </div>
+      <div class="pb" style="border-top:1px solid var(--line)" id="wk-foot"><span class="ft">—</span></div>
+    </div>
+
+    <div class="pn r" style="animation-delay:.135s">
+      <div class="ph"><b>阿深值班（建仓权 L2）</b><span id="as-note">—</span></div>
+      <div class="pb" id="as-sum"><div class="empty">读取中…</div></div>
+      <div class="pb" style="border-top:1px solid var(--line)">
+        <div class="g4" style="margin-bottom:12px">
+          <div class="kpi sm"><label>净值</label><div class="v num" id="as-nav">—</div><div class="d num flat" id="as-nav-sub">—</div></div>
+          <div class="kpi sm"><label>总仓</label><div class="v num" id="as-pos">—</div><div class="d num flat" id="as-pos-sub">—</div></div>
+          <div class="kpi sm"><label>排班轮次</label><div class="v num" id="as-run">—</div><div class="d num flat" id="as-run-sub">—</div></div>
+          <div class="kpi sm"><label>剩余额度</label><div class="v num" id="as-bud">—</div><div class="d num flat" id="as-bud-sub">—</div></div>
+        </div>
+        <table>
+          <thead><tr><th>轮次</th><th>状态</th><th>调模型</th><th>结论 / 跳过原因</th><th>动作</th><th>被拦</th></tr></thead>
+          <tbody id="as-runs"><tr><td colspan="6" class="empty">读取中…</td></tr></tbody>
+        </table>
+        <!-- 「它在等什么」：轮次表说的是**过去**6 轮，这里说的是**将来** ——
+             模型说"等伊利 28 元下方"时，这条等待必须真的挂在条件表里
+             （价位到了才会叫它）。空着不是"没内容"，是它在说空话。 -->
+        <div class="ft" id="as-armed" style="margin-top:10px;line-height:1.9">—</div>
+      </div>
+      <div class="pb" style="border-top:1px solid var(--line)">
+        <details>
+          <summary id="as-pool-sum">两套自选池 —</summary>
+          <table style="margin-top:10px">
+            <thead><tr><th>池</th><th>代码</th><th>名称</th><th>阿深写的理由</th></tr></thead>
+            <tbody id="as-pool"><tr><td colspan="4" class="empty">读取中…</td></tr></tbody>
+          </table>
+        </details>
+      </div>
+      <div class="pb" style="border-top:1px solid var(--line);display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <button class="btn" id="as-dry">演练一轮（调模型，不下单）</button>
+        <button class="btn p" id="as-real">真下单</button>
+        <span id="as-msg" style="font-size:11px;font-family:var(--mono);color:var(--tx3)"></span>
+      </div>
+      <div class="pb" style="border-top:1px solid var(--line)" id="as-foot"><span class="ft">—</span></div>
+    </div>
+
+    <div class="pn r" style="animation-delay:.14s">
+      <div class="ph"><b>模拟账户</b>
+        <span class="sel"><select id="acct"><option value="">—</option></select></span>
+      </div>
+      <div class="pb">
+        <div class="g4" style="margin-bottom:12px">
+          <div class="kpi sm"><label>净值</label><div class="v num" id="s-nav">—</div><div class="d num flat" id="s-nav-sub">—</div></div>
+          <div class="kpi sm"><label>收益率</label><div class="v num" id="s-ret">—</div><div class="d num flat" id="s-ret-sub">—</div></div>
+          <div class="kpi sm"><label>现金</label><div class="v num" id="s-cash">—</div><div class="d num flat" id="s-cash-sub">—</div></div>
+          <div class="kpi sm"><label>挂单 / 持仓</label><div class="v num" id="s-cnt">—</div><div class="d num flat" id="s-cnt-sub">—</div></div>
+        </div>
+        <canvas class="cv" id="nav-cv" width="1200" height="180"></canvas>
+        <table style="margin-top:10px">
+          <thead><tr><th>代码</th><th>数量</th><th>可卖</th><th>成本</th><th>收盘</th><th>市值</th><th>盈亏</th></tr></thead>
+          <tbody id="sim-body"><tr><td colspan="7" class="empty">读取中…</td></tr></tbody>
+        </table>
+        <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--line);display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+          <div style="width:96px"><label>代码</label><input id="o-code" maxlength="6" placeholder="6 位"></div>
+          <div style="width:104px"><label>方向</label><select id="o-dir"><option>买入</option><option>卖出</option></select></div>
+          <div style="width:104px"><label>数量</label><input id="o-qty" placeholder="股数"></div>
+          <div style="flex:1;min-width:140px"><label>备注</label><input id="o-reason" placeholder="可选"></div>
+          <button class="btn p" id="o-submit">下单</button>
+          <span id="o-msg" style="font-size:11px;font-family:var(--mono);color:var(--tx3)"></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="ft" id="ft">连接 API 中…</div>
+  </div>
+</main>
+</div>
+<script src="../static/js/md.js"></script>
+<script src="../static/js/demo.js"></script>
+<script>
+(() => {
+  const $ = (s) => document.querySelector(s);
+  const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const get = (u) => fetch(u, {cache: 'no-store'}).then(r => r.json());
+  const ERR = {missing: '无数据', empty: '解析失败', invalid: '参数非法', offline: '离线', stale: '数据滞后'};
+  const errText = (e) => (ERR[e && e.type] || (e && e.type) || '不可用');
+  const ft = $('#ft');
+  const n2 = (v, d) => (v == null || isNaN(v)) ? '—'
+    : Number(v).toLocaleString('en-US', {minimumFractionDigits: d == null ? 2 : d, maximumFractionDigits: d == null ? 2 : d});
+  const pct = (v) => (v == null || isNaN(v)) ? '—' : (v > 0 ? '+' : '') + Number(v).toFixed(2) + '%';
+  const cls = (v) => v == null ? 'flat' : (v > 0 ? 'up' : (v < 0 ? 'dn' : 'flat'));
+
+  // ---------------------------------------------------------------- 真持仓
+  function renderPortfolio(z) {
+    if (!z.ok) {
+      $('#pos-body').innerHTML = '<tr><td colspan="8" class="empty err">' + errText(z.error) + '</td></tr>';
+      $('#pos-note').textContent = errText(z.error);
+      ['k-total','k-mv','k-cash','k-alert'].forEach(id => { $('#' + id).textContent = '—'; });
+      return;
+    }
+    const d = z.data;
+    $('#top-date').textContent = '数据 ' + (d.price_date || d.expected_date || '—');
+    $('#k-total').textContent = d.total_value == null ? '—' : n2(d.total_value, 0);
+    $('#k-total-sub').textContent = d.valuation_complete
+      ? pct(d.total_pnl_pct) + ' 累计'
+      : ('缺 ' + (d.missing_codes || []).length + ' 只收盘价');
+    $('#k-total-sub').className = 'd num ' + (d.valuation_complete ? cls(d.total_pnl_pct) : 'flat');
+    $('#k-mv').textContent = n2(d.market_value_priced, 0);
+    $('#k-mv-sub').textContent = d.count + ' 只';
+    $('#k-cash').textContent = n2(d.cash, 0);
+
+    const alerts = d.alerts || [];
+    $('#k-alert').innerHTML = alerts.length
+      ? '<span class="chip bad">' + alerts.length + ' 项</span>'
+      : '<span class="chip ok">正常</span>';
+    $('#k-alert-sub').textContent = alerts.length
+      ? alerts.map(a => a.code + ' ' + a.type).join(' · ') : '无止损触发';
+
+    if (!d.positions.length) {
+      $('#pos-body').innerHTML = '<tr><td colspan="8" class="empty">无持仓</td></tr>';
+    } else {
+      $('#pos-body').innerHTML = d.positions.map(p =>
+        '<tr><td class="num">' + esc(p.code) + '</td><td>' + esc(p.name) + '</td>' +
+        '<td class="num">' + p.quantity + '</td><td class="num">' + n2(p.entry_price) + '</td>' +
+        '<td class="num">' + (p.price == null ? '<span class="flat">—</span>' : n2(p.price)) + '</td>' +
+        '<td class="num">' + (p.market_value == null ? '—' : n2(p.market_value, 0)) + '</td>' +
+        '<td class="num ' + cls(p.pnl_pct) + '">' + pct(p.pnl_pct) + '</td>' +
+        '<td class="num flat">' + (p.stop_loss == null ? '—' : n2(p.stop_loss)) + '</td></tr>').join('');
+    }
+    $('#pos-note').textContent = d.count + ' 只 · ' + (d.price_basis === 'close' ? '收盘价' : '—') +
+      (d.valuation_complete ? '' : ' · 估值不完整');
+
+    const rows = [];
+    alerts.forEach(a => rows.push(
+      '<div class="li"><span class="k">' + esc(a.type) + '</span><span class="v">' +
+      esc(a.code) + ' ' + esc(a.name || '') +
+      ' <span class="num">' + n2(a.current_price) + '</span>' +
+      ' <span class="flat num">触碰 ' + n2(a.trigger_price) + '</span></span>' +
+      '<span class="chip ' + (a.type === '止损' ? 'bad' : 'warn') + '">' +
+      (a.loss_pct != null ? a.loss_pct.toFixed(2) + '%'
+        : (a.profit_pct != null ? '+' + a.profit_pct.toFixed(2) + '%' : '')) + '</span></div>'));
+    const exp = Object.entries(d.exposure || {}).sort((a, b) => b[1] - a[1]);
+    exp.forEach(([k, v]) => rows.push(
+      '<div class="bar"><b>' + esc(k) + '</b><div class="t"><i style="width:' +
+      Math.min(100, v * 100).toFixed(0) + '%"></i></div>' +
+      '<span class="n num">' + (v * 100).toFixed(1) + '%</span></div>'));
+    $('#risk').innerHTML = rows.length ? rows.join('') : '<div class="empty">无告警</div>';
+    $('#risk-note').textContent = alerts.length + ' 告警 · ' + exp.length + ' 类暴露';
+  }
+
+  // ---------------------------------------------------------------- 联赛
+  function renderLeague(z) {
+    if (!z.ok) {
+      $('#league-body').innerHTML = '<tr><td colspan="7" class="empty err">' + errText(z.error) + '</td></tr>';
+      $('#league-note').textContent = errText(z.error);
+      return;
+    }
+    const g = (z.data.groups || {}).daily;
+    const t = z.data.target || {};
+    if (!g || !(g.rows || []).length) {
+      $('#league-body').innerHTML = '<tr><td colspan="7" class="empty">无榜单</td></tr>';
+    } else {
+      const rows = g.rows.slice().sort((a, b) => (b.return_pct || 0) - (a.return_pct || 0));
+      $('#league-body').innerHTML = rows.map(r =>
+        '<tr><td>' + esc(r.label || r.persona) + '</td>' +
+        '<td class="flat" style="font-size:11px">' +
+        esc(r.model || (r.kind === 'random' ? '随机' : '—')) + '</td>' +
+        '<td class="num">' + (r.nav_days == null ? '—' : r.nav_days) + '</td>' +
+        '<td class="num ' + cls(r.return_pct) + '">' + pct(r.return_pct) + '</td>' +
+        '<td class="num ' + cls(r.excess_vs_random_mean) + '">' + pct(r.excess_vs_random_mean) + '</td>' +
+        '<td class="num flat">' + (r.random_percentile == null ? '—' : r.random_percentile.toFixed(0) + '%') + '</td>' +
+        '<td>' + (r.conclusive ? '<span class="chip ok">可判定</span>'
+          : '<span class="chip warn">样本不足</span>') + '</td></tr>').join('');
+    }
+    $('#league-note').textContent = (z.data.as_of || '—') + ' · 随机均值 ' + pct(g && g.random_mean_return_pct) +
+      ' · n=' + (g && g.random_count != null ? g.random_count : '—');
+    const foot = [];
+    if (t.position_limit != null) {
+      const lim = t.position_limit <= 1 ? t.position_limit * 100 : t.position_limit;
+      foot.push('<span class="chip">目标仓位上限 ' + Number(lim).toFixed(0) + '%</span>');
+    }
+    if (t.market_state) foot.push('<span class="chip">' + esc(t.market_state) + '</span>');
+    if (z.data.caveat) foot.push('<span class="ft">' + esc(z.data.caveat) + '</span>');
+    $('#league-foot').innerHTML = foot.length ? foot.join(' ') : '<span class="ft">无目标仓位记录</span>';
+  }
+
+  // ---------------------------------------------------------------- 模拟账户
+  function drawNav(nav) {
+    const cv = $('#nav-cv');
+    if (!cv || !cv.getContext) return;
+    const ctx = cv.getContext('2d');
+    const w = cv.width, h = cv.height;
+    ctx.clearRect(0, 0, w, h);
+    if (!nav || nav.length < 2) {
+      ctx.fillStyle = '#556074'; ctx.font = '13px monospace'; ctx.textAlign = 'center';
+      ctx.fillText(nav && nav.length ? '单日净值' : '无净值曲线', w / 2, h / 2);
+      return;
+    }
+    const vals = nav.map(n => Number(n.total_value));
+    const min = Math.min.apply(null, vals), max = Math.max.apply(null, vals);
+    const span = (max - min) || 1, pad = 14;
+    const x = i => pad + i * (w - pad * 2) / (vals.length - 1);
+    const y = v => h - pad - (v - min) / span * (h - pad * 2);
+    const up = vals[vals.length - 1] >= vals[0];       // A 股口径：涨红跌绿
+    const stroke = up ? '#F0483E' : '#1FBF75';
+    ctx.beginPath();
+    vals.forEach((v, i) => i ? ctx.lineTo(x(i), y(v)) : ctx.moveTo(x(i), y(v)));
+    ctx.strokeStyle = stroke; ctx.lineWidth = 1.6; ctx.stroke();
+    ctx.lineTo(x(vals.length - 1), h - pad); ctx.lineTo(x(0), h - pad); ctx.closePath();
+    const grd = ctx.createLinearGradient(0, 0, 0, h);
+    grd.addColorStop(0, up ? 'rgba(240,72,62,.22)' : 'rgba(31,191,117,.22)');
+    grd.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = grd; ctx.fill();
+    ctx.fillStyle = '#556074'; ctx.font = '11px monospace'; ctx.textAlign = 'left';
+    ctx.fillText(max.toLocaleString('en-US'), pad, pad + 4);
+    ctx.fillText(min.toLocaleString('en-US'), pad, h - 2);
+    ctx.textAlign = 'right';
+    ctx.fillText(nav[0].date + ' → ' + nav[nav.length - 1].date, w - pad, h - 2);
+  }
+
+  function renderSim(z) {
+    if (!z.ok) {
+      $('#sim-body').innerHTML = '<tr><td colspan="7" class="empty err">' + errText(z.error) + '</td></tr>';
+      ['s-nav','s-ret','s-cash','s-cnt'].forEach(id => { $('#' + id).textContent = '—'; });
+      drawNav([]);
+      return;
+    }
+    const d = z.data;
+    $('#s-nav').textContent = d.total_value == null ? '—' : n2(d.total_value, 0);
+    $('#s-nav-sub').textContent = d.nav_date || '无净值';
+    $('#s-ret').textContent = pct(d.return_pct);
+    $('#s-ret').className = 'v num ' + cls(d.return_pct);
+    $('#s-ret-sub').textContent = d.valuation_at_cost ? '按成本估值' : '初始 ' + n2(d.initial_cash, 0);
+    $('#s-cash').textContent = n2(d.cash, 0);
+    $('#s-cash-sub').textContent = (d.price_date || '—') + ' 收盘';
+    $('#s-cnt').textContent = (d.pending_orders || []).length + ' / ' + (d.positions || []).length;
+
+    if (!(d.positions || []).length) {
+      $('#sim-body').innerHTML = '<tr><td colspan="7" class="empty">无持仓</td></tr>';
+    } else {
+      $('#sim-body').innerHTML = d.positions.map(p =>
+        '<tr><td class="num">' + esc(p.code) + '</td><td class="num">' + p.quantity + '</td>' +
+        '<td class="num flat">' + p.available + '</td><td class="num">' + n2(p.avg_cost) + '</td>' +
+        '<td class="num">' + (p.price == null ? '<span class="flat">—</span>' : n2(p.price)) + '</td>' +
+        '<td class="num">' + (p.market_value == null ? '—' : n2(p.market_value, 0)) + '</td>' +
+        '<td class="num ' + cls(p.pnl_pct) + '">' + pct(p.pnl_pct) + '</td></tr>').join('');
+    }
+    drawNav(d.nav || []);
+  }
+
+  function loadSim(acct) {
+    const u = '/api/desk/sim' + (acct ? '?account=' + encodeURIComponent(acct) : '');
+    get(u).then(z => {
+      renderSim(z);
+      if (z.ok) {
+        const sel = $('#acct');
+        if (sel.options.length <= 1) {
+          sel.innerHTML = (z.data.accounts || []).map(a =>
+            '<option value="' + esc(a) + '">' + esc(a) + '</option>').join('');
+        }
+        sel.value = z.data.account;
+      }
+    }).catch(() => renderSim({ok: false, error: {type: 'proxy'}}));
+  }
+
+  // ---------------------------------------------------------------- 联赛每日决策
+  // ⚠️ 这一区只**展示**服务端给的字段，不在前端重算仓位/收益口径。
+  //    `position_size` 历史上有 0~1 与 0~100 两种写法，这里只做"≤1 则 ×100"的显示换算。
+  function posText(v) {
+    if (v == null || isNaN(v)) return '—';
+    const n = Number(v);
+    return (n <= 1 ? n * 100 : n).toFixed(0) + '%';
+  }
+  function renderLeagueDay(z) {
+    const body = $('#ld-body');
+    const sel = $('#ld-date');
+    if (!z.ok) {
+      const detail = (z.error && z.error.detail) ? ' · ' + esc(z.error.detail) : '';
+      body.innerHTML = '<div class="empty err">' + errText(z.error) + detail + '</div>';
+      $('#ld-foot').innerHTML = '<span class="ft">' + errText(z.error) + '</span>';
+      return;
+    }
+    const d = z.data;
+    // 日期下拉：只建一次，之后只同步选中值（否则每次刷新都会重置用户选择）
+    if (sel.options.length !== d.dates.length) {
+      sel.innerHTML = d.dates.map(x => '<option value="' + esc(x) + '">' + esc(x) + '</option>').join('');
+    }
+    if (sel.value !== d.date) sel.value = d.date;
+
+    if (!d.personas.length) {
+      body.innerHTML = '<div class="empty">该日无决策记录</div>';
+      return;
+    }
+    body.innerHTML = d.personas.map(p => {
+      const nav = p.nav;
+      const head = '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 8px">' +
+        '<b style="font-family:var(--dsp);font-size:13px;color:var(--tx)">' + esc(p.label) + '</b>' +
+        (p.kind === 'random'
+          ? '<span class="chip warn">随机对照 · 零成本</span>'
+          : '<span class="chip">' + esc(p.model || '—') + '</span>') +
+        (nav
+          ? '<span class="chip">净值 <span class="num">' + n2(nav.total_value, 0) + '</span> · ' +
+            '<span class="num ' + cls(nav.return_pct) + '">' + pct(nav.return_pct) + '</span></span>'
+          : '<span class="chip warn">无当日净值</span>') +
+        '<span class="num" style="font-size:11px;color:var(--tx3)">' +
+        p.decisions.length + ' 条决策 · ' + p.fills.length + ' 笔成交</span>' +
+        '</div>';
+
+      let tbl;
+      if (!p.decisions.length) {
+        tbl = '<div class="empty" style="padding:6px 0">该日无决策</div>';
+      } else {
+        tbl = '<table><thead><tr><th>代码</th><th>名称</th><th>方向</th><th>目标仓位</th>' +
+          '<th>状态</th><th>决策理由</th></tr></thead><tbody>' +
+          p.decisions.map(x => {
+            const wait = !x.direction;
+            const dir = wait ? '<span class="flat">观望</span>'
+              : (String(x.direction).indexOf('空') >= 0
+                ? '<span class="dn">' + esc(x.direction) + '</span>'
+                : '<span class="up">' + esc(x.direction) + '</span>');
+            const st = x.advice_status || '—';
+            const stCls = st === '可执行' ? 'ok' : (st === '等待' ? 'warn' : '');
+            return '<tr><td class="num">' + esc(x.code === '-' ? '—' : x.code) + '</td>' +
+              '<td>' + esc(x.name || (x.code === '-' ? '不动' : '')) + '</td>' +
+              '<td>' + dir + '</td>' +
+              '<td class="num">' + (wait ? '—' : posText(x.position_size)) + '</td>' +
+              '<td><span class="chip ' + stCls + '">' + esc(st) + '</span></td>' +
+              '<td class="flat" style="font-size:11.5px;white-space:normal;line-height:1.55">' +
+              esc(x.order_reason || '') + '</td></tr>';
+          }).join('') + '</tbody></table>';
+      }
+
+      let fills = '';
+      if (p.fills.length) {
+        fills = '<div class="li" style="padding-top:6px"><span class="k">当日成交</span><span class="v">' +
+          p.fills.map(f => esc(f.code) + ' ' + esc(f.name || '') + ' ' + esc(f.direction || '') +
+            ' <span class="num">' + (f.quantity == null ? '—' : f.quantity) + '</span>股 @' +
+            ' <span class="num">' + n2(f.price) + '</span>').join(' · ') +
+          '</span><span class="chip ok">T+1 撮合</span></div>';
+      }
+
+      let rev = '';
+      if (p.review && (p.review.text || p.review.summary)) {
+        rev = '<details style="margin-top:8px">' +
+          '<summary style="cursor:pointer;font-size:11.5px;color:var(--cy);outline:none">自述复盘' +
+          (p.review.model ? '（' + esc(p.review.model) + '）' : '（模板）') +
+          (p.review.summary ? ' — ' + esc(String(p.review.summary).slice(0, 60)) + '…' : '') +
+          '</summary>' +
+          '<div class="md" style="max-height:340px;padding:10px 0">' +
+          (p.review.text ? bigaMd(p.review.text)
+            : '<p>' + esc(p.review.summary) + '</p>') + '</div></details>';
+      } else {
+        rev = '<div class="flat" style="font-size:11.5px;margin-top:6px">该日无自述复盘</div>';
+      }
+
+      return '<div style="padding:12px 0;border-bottom:1px solid var(--line)">' +
+        head + tbl + fills + rev + '</div>';
+    }).join('');
+
+    const c = d.coverage || {};
+    $('#ld-foot').innerHTML = '<span class="ft">' + esc(d.date) + ' · ' +
+      (c.personas || 0) + ' 人设 · ' + (c.decisions || 0) + ' 条决策 · ' +
+      (c.reviews || 0) + ' 份复盘 · ' + (c.fills || 0) + ' 笔成交 ' +
+      '· 成交按 T+1 开盘撮合（当日成交对应前一交易日决策）</span>';
+  }
+
+  function loadLeagueDay(date) {
+    const url = '/api/desk/league/day' + (date ? '?date=' + encodeURIComponent(date) : '');
+    return get(url).then(renderLeagueDay).catch(() => {
+      $('#ld-body').innerHTML = '<div class="empty err">API 不可达</div>';
+    });
+  }
+
+  // ---------------------------------------------------------------- AI 盘中唤醒
+  // 口径（照抄后端 desk.wake 的说明，不许在页面另算）：
+  // · armed=1 只表示"条件仍生效"，价位没到就不会有事件行 ⇒ 不是待办清单。
+  // · fired=0 但 skip_reason 非空 ⇒ 命中过却没执行，原因必须原样显示。
+  const WK_KIND = {
+    price_below: '跌破买入', price_above: '涨破',
+    stop_loss: '止损', take_profit: '止盈', wake_at: '定时',
+  };
+  const WK_ACT = {
+    buy: '买入', sell: '卖出', add: '加仓', reduce: '减仓',
+    pass: '看过不动', hold: '持有不动',
+  };
+
+  function renderWake(z) {
+    if (!z.ok) {
+      const detail = (z.error && z.error.detail) ? ' · ' + esc(z.error.detail) : '';
+      $('#wk-note').textContent = '不可用';
+      $('#wk-sum').innerHTML = '<div class="empty err">' + errText(z.error) + detail + '</div>';
+      $('#wk-body').innerHTML = '<tr><td colspan="7" class="empty">—</td></tr>';
+      $('#wk-cond').innerHTML = '<tr><td colspan="5" class="empty">—</td></tr>';
+      return;
+    }
+    const d = z.data;
+    const nm = (p) => (d.labels && d.labels[p]) || p || '—';
+
+    $('#wk-note').textContent = d.armed_count + ' 条盯盘中 · ' + d.total_events + ' 次唤醒' +
+      (d.last_date ? ' · 截至 ' + d.last_date : '');
+
+    // 汇总：每人设「命中/执行」；差值为"命中但跳过"
+    const agg = (d.by_persona || []).map(r =>
+      '<span class="chip ' + (r.fired ? 'ok' : 'warn') + '" title="命中 ' + r.hits +
+      ' 次 · 执行 ' + (r.fired || 0) + ' 次 · 跳过 ' + (r.skipped || 0) + ' 次">' +
+      esc(nm(r.persona)) + '（' + r.hits + '/' + (r.fired || 0) + '）</span>').join(' ');
+    const why = (d.skip_reasons || []).map(r =>
+      esc(r.skip_reason) + ' ×' + r.n).join(' · ');
+    $('#wk-sum').innerHTML = (agg || '<div class="empty">尚无唤醒记录</div>') +
+      (why ? '<div class="ft" style="margin-top:8px">命中但未执行：' + why + '</div>' : '');
+
+    const ev = d.events || [];
+    $('#wk-body').innerHTML = ev.length ? ev.map(x => {
+      const acts = (x.actions || []).map(a => WK_ACT[a] || a).join('、');
+      const done = x.fired
+        ? '<span class="chip ok">' + esc(acts || '已响应') + '</span>'
+        : '<span class="chip warn">未执行</span>';
+      const note = x.skip_reason ? esc(x.skip_reason) : (x.fired ? '' : '—');
+      return '<tr><td class="num">' + esc(x.trade_date || '') + '</td>' +
+        '<td class="num">' + esc(x.hit_at || '') + '</td>' +
+        '<td>' + esc(nm(x.persona)) + '</td>' +
+        '<td class="num">' + esc(x.code || '') + '</td>' +
+        '<td class="num">' + (x.trigger_px == null ? '—' : Number(x.trigger_px).toFixed(2)) + '</td>' +
+        '<td>' + done + '</td>' +
+        '<td class="ft" style="white-space:normal">' + note + '</td></tr>';
+    }).join('') : '<tr><td colspan="7" class="empty">尚无唤醒记录（条件未命中过）</td></tr>';
+
+    const cs = d.armed || [];
+    $('#wk-cond-sum').textContent = '埋着的触发条件 ' + cs.length + ' 条（仍生效，不代表即将触发）';
+    $('#wk-cond').innerHTML = cs.length ? cs.map(c => {
+      let th = '—';
+      if (c.threshold != null) th = Number(c.threshold).toFixed(2);
+      else if (c.threshold_pct != null) th = (Number(c.threshold_pct) * 100).toFixed(1) + '%';
+      return '<tr><td>' + esc(nm(c.persona)) + '</td>' +
+        '<td class="num">' + esc(c.code || '') + '</td>' +
+        '<td>' + esc(WK_KIND[c.kind] || c.kind || '—') + '</td>' +
+        '<td class="num">' + th + '</td>' +
+        '<td class="ft" style="white-space:normal">' + esc(c.note || '') + '</td></tr>';
+    }).join('') : '<tr><td colspan="5" class="empty">当前没有生效中的触发条件</td></tr>';
+
+    $('#wk-foot').innerHTML = '<span class="ft">「盯盘中」= 条件仍 armed，价位没到就不会有事件；' +
+      '命中但未执行的原因（如随机对照组不跑盘中决策）会原样列出</span>';
+  }
+
+  function loadWake() {
+    return get('/api/desk/wake').then(renderWake).catch(() => {
+      $('#wk-sum').innerHTML = '<div class="empty err">API 不可达</div>';
+    });
+  }
+
+  // ---------------------------------------------------------------- 阿深值班
+  // 口径（后端 desk.ashen() 给，页面**不重算**）：
+  // · `autonomy.violations` 非空 ⇒ 名义上 L2、实际上每笔都被拒，必须报红。
+  // · `pool_hint` 是后端成句结论（"池子空 ⇒ 无标的"），页面不自己拼条件。
+  // · `count` 可能是 null（库读挂了）≠ 0（真的空池）——两者要分开显示。
+  const AS_ST = {ok: ['ok', '已跑'], skipped: ['warn', '跳过'], error: ['bad', '出错']};
+
+  function renderAshen(z) {
+    if (!z.ok) {
+      const detail = (z.error && z.error.detail) ? ' · ' + esc(z.error.detail) : '';
+      $('#as-note').textContent = '不可用';
+      $('#as-sum').innerHTML = '<div class="empty err">' + errText(z.error) + detail + '</div>';
+      $('#as-runs').innerHTML = '<tr><td colspan="6" class="empty">—</td></tr>';
+      $('#as-pool').innerHTML = '<tr><td colspan="4" class="empty">—</td></tr>';
+      // 失败分支也必须清这一行：留着上一次的渲染结果会让人以为"读取成功但内容没变"，
+      // 而它其实是接口挂了（同 as-nav/as-pos 等 KPI 的处理）
+      $('#as-armed').textContent = '—';
+      ['as-nav','as-pos','as-run','as-bud'].forEach(id => { $('#' + id).textContent = '—'; });
+      return;
+    }
+    const d = z.data;
+    const au = d.autonomy || {}, pa = au.params || {}, ac = d.account || {};
+    const td = d.today || {}, ct = td.counts || {}, bd = d.budget || {};
+    const pl = d.pools || {}, mine = pl.ashen || {}, boss = pl.user || {};
+
+    // 头部：级别 + 关键边界（数字全部来自 params，不在页面写死 8%/100%）
+    $('#as-note').textContent = au.level + ' · 单票 ≤' + ((pa.max_position_pct || 0) * 100).toFixed(0) +
+      '% · 总仓 ≤' + ((pa.max_total_pct || 0) * 100).toFixed(0) + '% · 最多 ' + (pa.max_stocks || '—') + ' 只';
+
+    const chips = [];
+    const lv = au.level || 'L0';
+    chips.push('<span class="chip ' + (lv === 'L2' ? 'ok' : 'warn') + '">' + esc(lv) + ' ' +
+      esc(au.desc || '') + '</span>');
+    if (au.fallback) {
+      chips.push('<span class="chip bad">配置值 ' + esc(au.raw || '空') +
+        ' 非法，已回落 ' + esc(lv) + '</span>');
+    }
+    if (au.consistent === false) {
+      chips.push('<span class="chip bad">参数自相矛盾：' +
+        (au.violations || []).map(esc).join('；') + '</span>');
+    }
+    const mq = (bd.routine || {});
+    chips.push('<span class="chip">定时额度 ' + (mq.remaining == null ? '—' : mq.remaining) +
+      '/' + (mq.quota == null ? '—' : mq.quota) + '</span>');
+    $('#as-sum').innerHTML = chips.join(' ') +
+      '<div class="ft" style="margin-top:8px">' + esc(d.pool_hint || '') + '</div>';
+
+    // 四个 KPI
+    $('#as-nav').textContent = ac.exists ? (ac.total_value == null ? '—' : n2(ac.total_value, 0)) : '未开户';
+    $('#as-nav-sub').textContent = !ac.exists
+      ? '首次建仓时自动创建'
+      : (ac.valuation_complete ? pct(ac.return_pct) + ' 累计'
+        : '缺 ' + (ac.missing_codes || []).length + ' 只收盘价');
+    $('#as-nav-sub').className = 'd num ' + (ac.exists && ac.valuation_complete ? cls(ac.return_pct) : 'flat');
+
+    $('#as-pos').textContent = ac.position_pct == null ? '—' : n2(ac.position_pct, 1) + '%';
+    $('#as-pos').className = 'v num ' + cls(ac.position_pct);
+    $('#as-pos-sub').textContent = (ac.position_count || 0) + ' 只 · 现金 ' + n2(ac.cash, 0) +
+      (ac.pending_orders ? ' · 挂单 ' + ac.pending_orders : '');
+
+    // 分子只数**排班内真的调了模型**的轮次。
+    // 用 ct.total 会把两件事都算成"到岗"：被跳过的格子、以及人按按钮的手动轮
+    // —— 后者最容易误读，17:00 点一次演练，N/6 就从 0 变 1。
+    const nSlots = (td.slots || []).length || 6;
+    $('#as-run').textContent = (ct.scheduled_llm || 0) + '/' + nSlots;
+    $('#as-run-sub').textContent = [
+      ct.skipped ? '跳过 ' + ct.skipped : '',
+      td.next_slot ? '下一轮 ' + td.next_slot + (td.due_slot ? '（待跑）' : '')
+                   : '今日排班已结束'
+    ].filter(Boolean).join(' · ');
+    $('#as-bud').textContent = mq.remaining == null ? '—' : mq.remaining;
+    $('#as-bud-sub').textContent = '手动 ' + (ct.manual || 0) + ' 轮 · 调模型 ' + (ct.llm_called || 0);
+
+    // 轮次表
+    const runs = td.runs || [];
+    $('#as-runs').innerHTML = runs.length ? runs.map(r => {
+      const st = AS_ST[r.status] || ['', r.status || '—'];
+      const acts = (r.actions || []).map(a => a.code || a.action || '');
+      const blk = r.blocked || [];
+      const blkTitle = blk.map(b => (b.code || '') + ' ' + (b.reason || b.violation || '')).join('；');
+      return '<tr><td class="num">' + esc(r.slot || '') + '</td>' +
+        '<td><span class="chip ' + st[0] + '">' + esc(st[1]) + '</span></td>' +
+        '<td class="num">' + (r.llm_called ? '是' : '否') + '</td>' +
+        '<td class="ft" style="white-space:normal">' +
+          esc(String(r.summary || r.skip_reason || '—').slice(0, 80)) + '</td>' +
+        '<td class="num" title="' + esc(acts.join(' ')) + '">' + acts.length + '</td>' +
+        '<td class="num" title="' + esc(blkTitle) + '">' + (blk.length
+          ? '<span class="chip warn">' + blk.length + '</span>' : '—') + '</td></tr>';
+    }).join('') : '<tr><td colspan="6" class="empty">今日还没有轮次（排班 09:40 起）</td></tr>';
+
+    // 它在等什么（后端 `armed`；与 prompt 里「你当前挂着的等待条件」同源）
+    // 口径：available=false 是**读失败**（要查库），rows=[] 是**它真的没挂**
+    // —— 后者正是要暴露的：它在复盘里说"在等某某价位"，条件表里却一条都没有，
+    // 那个等待在系统里不存在（价位到了不会叫醒它）。
+    const ar = d.armed || {};
+    const KW = {price_below: '跌破', price_above: '涨破', stop_loss: '止损',
+                take_profit: '止盈', time: '定时'};
+    if (ar.available === false) {
+      $('#as-armed').innerHTML = '<span class="chip bad">等待条件读取失败</span>' +
+        ' 这不是"没挂"，是库读不出来——先查库，别据此判断它在敷衍。';
+    } else if (!(ar.rows || []).length) {
+      $('#as-armed').innerHTML = '<span class="chip warn">没挂任何等待条件</span>' +
+        ' 若上面写着"在等某某价位"，那个等待在系统里<b>不存在</b>：价位到了不会叫它、' +
+        '你也查不到它在等什么。';
+    } else {
+      $('#as-armed').innerHTML = '<span style="color:var(--tx3)">它在等：</span> ' +
+        (ar.rows || []).map(c => {
+          const v = c.wake_at ? (esc(c.wake_at) + ' 定时')
+            : (c.threshold != null ? n2(c.threshold, 2)
+              : (c.threshold_pct != null ? (c.threshold_pct * 100).toFixed(1) + '%' : '—'));
+          return '<span class="chip" title="' + esc(c.note || '') + '">' +
+            esc(c.code) + ' ' + esc(KW[c.kind] || c.kind) + ' ' + v + '</span>';
+        }).join(' ') +
+        '  <span style="color:var(--tx3)">（价位到了会叫醒它）</span>';
+    }
+
+    // 两套自选池
+    const poolRows = [];
+    const addPool = (label, p, cls2) => {
+      if (!p.available) {
+        poolRows.push('<tr><td>' + esc(label) + '</td><td colspan="3" class="empty err">' +
+          '读取失败（不是空池）</td></tr>');
+        return;
+      }
+      (p.rows || []).forEach(r => poolRows.push(
+        '<tr><td class="flat">' + esc(label) + '</td>' +
+        '<td class="num">' + esc(r.code) + '</td><td>' + esc(r.name) + '</td>' +
+        '<td class="ft" style="white-space:normal">' + esc(r.note || '—') + '</td></tr>'));
+    };
+    addPool('阿深', mine);
+    addPool('老板', boss);
+    $('#as-pool').innerHTML = poolRows.length ? poolRows.join('')
+      : '<tr><td colspan="4" class="empty">两套自选池都空</td></tr>';
+    $('#as-pool-sum').textContent = '两套自选池：阿深 ' +
+      (mine.available === false ? '读取失败' : (mine.count == null ? '—' : mine.count)) + ' 只 · 老板 ' +
+      (boss.available === false ? '读取失败' : (boss.count == null ? '—' : boss.count)) +
+      ' 只（老板池只读，阿深不能改）';
+
+    $('#as-foot').innerHTML = '<span class="ft">判定所用日线截止 ' +
+      esc(td.trade_date || '—') + '（盘中当天 K 线不完整，用上一交易日）· ' +
+      '「同轮加池 + 买入」必被拒：先观察一轮，不给看到就追的口子</span>';
+  }
+
+  function loadAshen() {
+    return get('/api/desk/ashen').then(renderAshen).catch(() => {
+      renderAshen({ok: false, error: {type: 'proxy'}});
+    });
+  }
+
+  // 手动唤醒：**默认演练**。真下单要二次确认 —— 按一下就可能建仓是不可接受的。
+  function wakeAshen(dry) {
+    const msg = $('#as-msg');
+    if (!dry && !window.confirm('确认让阿深按当前自选池真下单？\n委托按 T+1 下一交易日开盘撮合，成交价未知。')) {
+      return;
+    }
+    msg.textContent = dry ? '演练中…（会调一次模型）' : '提交中…';
+    msg.style.color = 'var(--tx3)';
+    fetch('/api/desk/ashen/wake?dry_run=' + (dry ? 'true' : 'false'), {method: 'POST'})
+      .then(r => r.json()).then(z => {
+        if (!z.ok) {
+          msg.textContent = errText(z.error);
+          msg.style.color = 'var(--am)';
+          return;
+        }
+        const d = z.data;
+        if (d.accepted) {
+          const run = d.run || {};
+          msg.textContent = (d.dry_run ? '演练完成：' : '已执行：') +
+            (run.kept || 0) + ' 个动作通过、' + (run.blocked || 0) + ' 个被拦';
+          msg.style.color = 'var(--cy)';
+        } else {
+          msg.textContent = '未跑：' + (d.reason || '未知原因');
+          msg.style.color = 'var(--rd)';
+        }
+        loadAshen();
+        loadSim($('#acct').value);
+      }).catch(() => { msg.textContent = 'API 不可达'; msg.style.color = 'var(--rd)'; });
+  }
+
+  // ---------------------------------------------------------------- 启动
+  if (location.protocol === 'file:') {
+    ft.textContent = '本地预览 · 未连接 API';
+    $('#pos-body').innerHTML = '<tr><td colspan="8" class="empty">未连接 API</td></tr>';
+    $('#league-body').innerHTML = '<tr><td colspan="7" class="empty">未连接 API</td></tr>';
+    $('#ld-body').innerHTML = '<div class="empty">未连接 API</div>';
+    $('#sim-body').innerHTML = '<tr><td colspan="7" class="empty">未连接 API</td></tr>';
+    $('#wk-sum').innerHTML = '<div class="empty">未连接 API</div>';
+    $('#wk-body').innerHTML = '<tr><td colspan="7" class="empty">—</td></tr>';
+    $('#wk-cond').innerHTML = '<tr><td colspan="5" class="empty">—</td></tr>';
+    $('#as-sum').innerHTML = '<div class="empty">未连接 API</div>';
+    $('#as-runs').innerHTML = '<tr><td colspan="6" class="empty">—</td></tr>';
+    $('#as-pool').innerHTML = '<tr><td colspan="4" class="empty">—</td></tr>';
+    return;
+  }
+
+  // ---------------------------------------------------------------- 下单
+  // T+1 市价单：submit_order 只做校验与挂单，成交价由下一交易日开盘撮合。
+  // 「被拒」是业务结果（现金不足/无持仓/不足一手），返 ok:true + accepted:false。
+  function submitOrder() {
+    const code = $('#o-code').value.trim();
+    const dir = $('#o-dir').value;
+    const qty = $('#o-qty').value.trim();
+    const reason = $('#o-reason').value.trim();
+    const msg = $('#o-msg');
+    if (!/^\d{6}$/.test(code)) { msg.textContent = '代码必须是 6 位数字'; msg.style.color = 'var(--am)'; return; }
+    if (!/^\d+$/.test(qty) || Number(qty) <= 0) { msg.textContent = '数量必须是正整数'; msg.style.color = 'var(--am)'; return; }
+    const qs = new URLSearchParams({code: code, direction: dir, quantity: qty});
+    const acct = $('#acct').value;
+    if (acct) qs.set('account', acct);
+    if (reason) qs.set('reason', reason);
+    msg.textContent = '提交中…';
+    msg.style.color = 'var(--tx3)';
+    fetch('/api/desk/sim/order?' + qs.toString(), {method: 'POST'}).then(r => r.json()).then(z => {
+      if (!z.ok) {
+        msg.textContent = errText(z.error);
+        msg.style.color = 'var(--am)';
+        return;
+      }
+      const d = z.data;
+      if (d.accepted) {
+        msg.textContent = '已挂单 #' + (d.order && d.order.order_id) + '（T+1 开盘撮合）';
+        msg.style.color = 'var(--cy)';
+        $('#o-code').value = ''; $('#o-qty').value = ''; $('#o-reason').value = '';
+      } else {
+        msg.textContent = '被拒：' + (d.reason || '未知原因');
+        msg.style.color = 'var(--rd)';
+      }
+      loadSim($('#acct').value);
+    }).catch(() => { msg.textContent = 'API 不可达'; msg.style.color = 'var(--rd)'; });
+  }
+
+  $('#o-submit').addEventListener('click', submitOrder);
+  $('#acct').addEventListener('change', (e) => loadSim(e.target.value));
+  $('#ld-date').addEventListener('change', (e) => loadLeagueDay(e.target.value));
+  $('#as-dry').addEventListener('click', () => wakeAshen(true));
+  $('#as-real').addEventListener('click', () => wakeAshen(false));
+
+  // ⚠️ 阿深值班卡**独立取数**：下面那条 `Promise.all` 是"全或无"——任一接口失败
+  //    就整块进 `.catch()`，这张卡会永远停在"读取中…"，而且它的位置在链尾，
+  //    等于"只要别的接口坏了，阿深就一定看不见"。
+  loadAshen();
+
+  Promise.all([get('/api/desk/portfolio'), get('/api/desk/league'), get('/api/meta')])
+    .then(([pf, lg, meta]) => {
+      renderPortfolio(pf);
+      renderLeague(lg);
+      loadSim('');
+      loadLeagueDay('');
+      loadWake();
+      const demo = (window.bigaDemo ? bigaDemo.collect() : []);
+      ft.textContent = 'API ' + meta.data.version + ' · 数据 ' + (pf.as_of || '—') +
+        (demo.length ? ' · 演示 ' + demo.join(' · ') : '');
+    })
+    .catch(() => { ft.textContent = 'API 不可达'; });
+})();
+</script>
+</body>
+</html>

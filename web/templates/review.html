@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>每日复盘 · bigAagents</title>
+<link rel="stylesheet" href="../static/fonts/fonts.css">
+<link rel="stylesheet" href="../static/css/theme.css">
+</head>
+<body>
+<div class="app">
+<aside>
+  <div class="brand"><i>B</i><div><b>bigAagents</b><span>A-SHARE · MULTI-AGENT</span></div></div>
+  <nav class="nav">
+    <a href="index.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1.5" y="1.5" width="5.5" height="5.5" rx="1"/><rect x="9" y="1.5" width="5.5" height="5.5" rx="1"/><rect x="1.5" y="9" width="5.5" height="5.5" rx="1"/><rect x="9" y="9" width="5.5" height="5.5" rx="1"/></svg>仪表盘</a>
+    <a href="screening.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3h12l-4.5 5.5v5L6.5 15.5v-7L2 3z"/></svg>选股</a>
+    <a href="analysis.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="1.8"/><path d="M8 1v2.5M8 12.5V15M1 8h2.5M12.5 8H15"/></svg>深度分析</a>
+    <a href="watch.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1.5 13.5l4-5 3 2 5.5-7.5"/><path d="M11 3h3v3"/></svg>看盘</a>
+    <a href="intel.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="12.5" r="1.5"/><path d="M4.8 9.2a4.4 4.4 0 0 1 6.4 0M2.2 6.2a8.2 8.2 0 0 1 11.6 0"/></svg>情报</a>
+    <a href="desk.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1.5L14.5 5 8 8.5 1.5 5 8 1.5z"/><path d="M1.5 9l6.5 3.5L14.5 9"/></svg>交易台</a>
+    <a href="review.html" class="on"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 1.5h7l3 3v10H3z"/><path d="M10 1.5v3h3"/><path d="M5.5 8h5M5.5 10.5h5"/></svg>每日复盘</a>
+    <a href="research.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 1.5h4M7 1.5v4L3 13h10L9 5.5v-4"/></svg>研究</a>
+    <a href="chat.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 2.5h12v8H8l-3.5 3v-3H2z"/></svg>助手</a>
+    <a href="system.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 4h12M2 8h12M2 12h12"/><circle cx="5" cy="4" r="1.8"/><circle cx="11" cy="8" r="1.8"/><circle cx="7" cy="12" r="1.8"/></svg>系统</a>
+  </nav>
+  <div class="ft">v3 · LOCAL</div>
+</aside>
+<main>
+  <header class="top">
+    <h1>每日复盘</h1>
+    <span class="sp"></span>
+    <span class="pill"><span class="dot"></span><span id="src">复盘</span></span>
+    <span class="pill num" id="top-date">数据 —</span>
+  </header>
+  <div class="wrap">
+    <div class="g4 r">
+      <div class="kpi"><label>最新复盘</label><div class="v num" id="k-date">—</div><div class="d num flat" id="k-count">—</div></div>
+      <div class="kpi"><label>正文</label><div class="v num" id="k-chars">—</div><div class="d num flat" id="k-file">—</div></div>
+      <div class="kpi"><label>观察点命中率</label><div class="v num" id="k-hit">—</div><div class="d num flat" id="k-hit-sub">—</div></div>
+      <div class="kpi"><label>待核对</label><div class="v num" id="k-pend">—</div><div class="d num flat" id="k-pend-sub">—</div></div>
+    </div>
+
+    <div class="side r" style="animation-delay:.06s">
+      <div class="pn">
+        <div class="ph"><b id="md-title">复盘正文</b><span id="md-note">—</span></div>
+        <div class="md" id="md"><div class="empty">读取中…</div></div>
+      </div>
+      <div class="pn">
+        <div class="ph"><b>历史存档</b><span id="arch-note">—</span></div>
+        <div class="arch" id="arch"><div class="empty">读取中…</div></div>
+      </div>
+    </div>
+
+    <!-- 今日决策三块（数据源：/api/review/digest → core/decision_digest.py）
+         ⚠️ 这三块在 2026-10-26 之前**只有接口没有页面**：模块 532 行、只读零联网、
+         每次渲染都能调，但 `grep -rn 'review/digest' web/templates/` 是空的。
+         于是"选股看不出质量 / 复盘不讲决策 / 明日没有操作建议"三条反馈一直没落地。 -->
+    <div class="pn r" style="animation-delay:.12s">
+      <div class="ph"><b>今日决策</b><span id="dg-note">—</span></div>
+      <div class="pb">
+        <div class="g3c">
+          <div>
+            <div class="ft" style="padding-bottom:6px">选股</div>
+            <table><thead><tr><th>代码</th><th>名称</th><th>评分</th><th>策略</th></tr></thead>
+              <tbody id="dg-screens"><tr><td colspan="4" class="empty">读取中…</td></tr></tbody></table>
+          </div>
+          <div>
+            <div class="ft" style="padding-bottom:6px">深度分析</div>
+            <table><thead><tr><th>代码</th><th>名称</th><th>结论</th><th>状态</th></tr></thead>
+              <tbody id="dg-analyses"><tr><td colspan="4" class="empty">读取中…</td></tr></tbody></table>
+          </div>
+          <div>
+            <div class="ft" style="padding-bottom:6px">模拟盘</div>
+            <table><thead><tr><th>代码</th><th>方向</th><th>数量</th><th>金额</th></tr></thead>
+              <tbody id="dg-trades"><tr><td colspan="4" class="empty">读取中…</td></tr></tbody></table>
+          </div>
+        </div>
+        <div class="ft" id="dg-empty" style="padding-top:8px"></div>
+      </div>
+    </div>
+
+    <div class="g2 r" style="animation-delay:.16s">
+      <div class="pn">
+        <div class="ph"><b>选股质量（评分分档 T+N 回填）</b><span id="dg-qnote">—</span></div>
+        <div class="pb" id="dg-quality"><div class="empty">读取中…</div></div>
+      </div>
+      <div class="pn">
+        <div class="ph"><b>分析结论质量（T+5）</b><span id="dg-anote">—</span></div>
+        <div class="pb" id="dg-analysis"><div class="empty">读取中…</div></div>
+      </div>
+    </div>
+
+    <div class="pn r" style="animation-delay:.2s">
+      <div class="ph"><b>明日行动清单</b><span id="dg-act-note">—</span></div>
+      <div class="pb" id="dg-actions"><div class="empty">读取中…</div></div>
+    </div>
+
+    <div class="pn r" style="animation-delay:.12s">
+      <div class="ph"><b>待核对观察点</b><span id="pend-note">—</span></div>
+      <div class="pb" id="pend"><div class="empty">读取中…</div></div>
+    </div>
+    <div class="ft" id="ft">连接 API 中…</div>
+  </div>
+</main>
+</div>
+<script src="../static/js/md.js"></script>
+<script src="../static/js/demo.js"></script>
+<script>
+(() => {
+  const $ = (s) => document.querySelector(s);
+  const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const get = (u) => fetch(u, {cache: 'no-store'}).then(r => r.json());
+  const ERR = {missing: '无数据', empty: '解析失败', invalid: '参数非法', offline: '离线', stale: '数据滞后'};
+  const errText = (e) => (ERR[e && e.type] || (e && e.type) || '不可用');
+  const ft = $('#ft');
+
+  // ---------------------------------------------------------------- 渲染
+  let reports = [];
+  let currentDate = null;
+
+  function showReport(d, markActive) {
+    $('#md').innerHTML = d.markdown ? bigaMd(d.markdown) : '<div class="empty">正文为空</div>';
+    $('#md-title').textContent = '复盘正文';
+    $('#md-note').textContent = d.file + ' · ' + (d.chars || 0).toLocaleString('en-US') + ' 字符' +
+      (d.truncated ? ' · 已截断' : '');
+    currentDate = d.date;
+    document.querySelectorAll('#arch .it').forEach(el =>
+      el.classList.toggle('on', markActive !== false && el.dataset.date === d.date));
+  }
+
+  function renderArchive(list) {
+    if (!list.length) { $('#arch').innerHTML = '<div class="empty">无存档</div>'; return; }
+    $('#arch').innerHTML = list.map((r, idx) =>
+      '<div class="it" data-date="' + esc(r.date) + '">' +
+      '<a href="#" onclick="return false">' + esc(r.date) + '</a>' +
+      '<span class="n">' + (idx === 0 ? '最新' : (r.size / 1024).toFixed(0) + ' KB') + '</span></div>').join('');
+    $('#arch-note').textContent = list.length + ' 篇';
+    document.querySelectorAll('#arch .it').forEach(el => {
+      el.addEventListener('click', () => {
+        const d = el.dataset.date;
+        if (d === currentDate) return;
+        get('/api/review/archive?date=' + encodeURIComponent(d)).then(z => {
+          if (!z.ok) { $('#md').innerHTML = '<div class="empty err">' + errText(z.error) + '</div>'; return; }
+          showReport(z.data, true);
+        });
+      });
+    });
+  }
+
+  function renderPending(z) {
+    if (!z.ok) {
+      $('#pend').innerHTML = '<div class="empty err">' + errText(z.error) + '</div>';
+      $('#k-pend').textContent = '—'; $('#k-pend-sub').textContent = errText(z.error);
+      return;
+    }
+    const items = z.data.items || [];
+    $('#k-pend').textContent = z.data.count;
+    $('#k-pend-sub').textContent = z.data.count ? '待次日核对' : '无';
+    $('#pend-note').textContent = z.data.count + ' 条';
+    $('#pend').innerHTML = items.length ? items.map(o =>
+      '<div class="obs"><span class="mk n">·</span><span class="m num">' +
+      esc(String(o.review_date || '').slice(5)) + '</span><span class="x">' +
+      esc(o.content || '') + '</span><span class="chip">' + esc(o.kind) + '</span></div>').join('')
+      : '<div class="empty">无待核对观察点</div>';
+  }
+
+  function renderStats(z) {
+    if (!z.ok) {
+      $('#k-hit').textContent = '—'; $('#k-hit-sub').textContent = errText(z.error);
+      return;
+    }
+    const s = z.data;
+    if (s['命中率'] == null) {
+      $('#k-hit').textContent = '—';
+      $('#k-hit-sub').textContent = '已核对 0 条';
+    } else {
+      // ⚠️ 分子必须写全：`命中率` 的定义是 (达成 + 部分达成) / 核对，
+      //    页面上只写「达成 6 / 核对 52」时读者会自己算成 11.5%，与 25% 打架。
+      //    数字自洽是硬要求 —— 要么把两项都写出来，要么别给率。
+      const part = s['部分达成'] || 0;
+      $('#k-hit').textContent = (s['命中率'] * 100).toFixed(0) + '%';
+      $('#k-hit-sub').textContent = '达成 ' + (s['达成'] || 0) +
+        (part ? ' + 部分 ' + part : '') + ' / 核对 ' + (s.verified || 0) +
+        ' · 近 ' + s.window_days + ' 天';
+      $('#k-hit-sub').title = '未发生 ' + (s['未发生'] || 0) + ' · 无法验证 ' +
+        (s['无法验证'] || 0) + '（无法验证也计在分母里，会拉低命中率）';
+    }
+  }
+
+  // -------------------------------------------------- 今日决策 / 质量 / 行动
+  //
+  // 这三块的数据一直存在（`core/decision_digest.py`），但页面从未调用 ——
+  // 「选股看不出质量、复盘不讲决策、明日没有操作建议」因此长期无解。
+  // 纪律：**缺就是缺**，没有样本时显示"样本不足"/"未回填"，绝不用 0 占位
+  // （0% 胜率跟"还没有样本"是两件事）。
+  const pctp = (v, d = 2) => (v == null ? '—' : ((v > 0 ? '+' : '') + (Number(v) * 100).toFixed(d) + '%'));
+  const pcts = (v, d = 2) => (v == null ? '—' : (Number(v).toFixed(d) + '%'));
+  const clsOf = (v) => (v == null ? 'flat' : (v > 0 ? 'up' : (v < 0 ? 'dn' : 'flat')));
+  const fill = (id, html) => { const el = $('#' + id); if (el) el.innerHTML = html; };
+  const rowsEmpty = (n, txt) => '<tr><td colspan="' + n + '" class="empty">' + txt + '</td></tr>';
+
+  function renderDigest(z) {
+    if (!z || !z.ok) {
+      const why = errText(z && z.error);
+      ['dg-screens', 'dg-analyses', 'dg-trades'].forEach(id => fill(id, rowsEmpty(4, why)));
+      ['dg-quality', 'dg-analysis', 'dg-actions'].forEach(id =>
+        fill(id, '<div class="empty err">' + why + '</div>'));
+      $('#dg-note').textContent = why;
+      return;
+    }
+    const d = z.data || {};
+    const t = d.today || {}, q = d.quality || {}, a = d.actions || {};
+
+    // ── 1 今日决策 ──
+    const sc = t.screens || [], an = t.analyses || [], tr = t.trades || [];
+    $('#dg-note').textContent = (t.date || '—') + ' · 选股 ' + sc.length +
+      ' / 分析 ' + an.length + ' / 成交 ' + tr.length;
+    // 当日 `screen_picks` 常有 100+ 行（扩池后一次落库就上百），全铺出来会把页面撑爆；
+    // 截断但**必须自报总数**，否则读者以为当日只选了这么多。
+    const SC = 10;
+    fill('dg-screens', sc.length ? sc.slice(0, SC).map(x =>
+      '<tr><td class="num">' + esc(x.code) + '</td><td>' + esc(x.name || '') + '</td>' +
+      '<td class="num">' + (x.score == null ? '—' : Number(x.score).toFixed(1)) + '</td>' +
+      '<td>' + esc(x.strategy || '—') +
+      (x.degraded ? ' <span class="chip warn">降级</span>' : '') + '</td></tr>').join('') +
+      (sc.length > SC ? rowsEmpty(4, '仅显示前 ' + SC + ' 只（共 ' + sc.length + ' 只）') : '')
+      : rowsEmpty(4, '当日无选股记录'));
+
+    fill('dg-analyses', an.length ? an.map(x => {
+      const lab = x.decision_label || '—';
+      const c = lab === '看多' ? 'up' : (lab === '看空' ? 'dn' : 'flat');
+      return '<tr><td class="num">' + esc(x.code) + '</td><td>' + esc(x.name || '') +
+        '</td><td class="' + c + '">' + esc(lab) + '</td><td><span class="chip">' +
+        esc(x.advice_status || '—') + '</span>' +
+        (x.duplicate ? ' <span class="chip warn">重复</span>' : '') + '</td></tr>';
+    }).join('') : rowsEmpty(4, '今日无深度分析记录'));
+
+    fill('dg-trades', tr.length ? tr.map(x =>
+      '<tr><td class="num">' + esc(x.code) + '</td><td>' + esc(x.direction || '—') +
+      '</td><td class="num">' + (x.quantity == null ? '—' : Number(x.quantity).toLocaleString('en-US')) +
+      '</td><td class="num">' + (x.amount == null ? '—' : '¥' + Number(x.amount).toLocaleString('en-US', { maximumFractionDigits: 0 })) +
+      '</td></tr>').join('')
+      : rowsEmpty(4, '当日无模拟成交'));
+
+    const er = t.empty_reasons || [];
+    $('#dg-empty').textContent = er.length ? ('缺：' + er.join(' · ')) : '';
+    // ⚠️ 成交按 T+1 开盘撮合 ⇒ 当日成交对应**前一交易日**的决策，不许暗示"当天决策当天成交"
+    $('#dg-empty').title = '模拟盘为 T+1 开盘撮合：当日成交对应前一交易日的决策';
+
+    // ── 2 选股质量（评分分档单调性）──
+    const sq = q.screen || {};
+    const bands = sq.by_score_band || [];
+    const canJudge = (sq.status === 'ok') && bands.length;
+    $('#dg-qnote').textContent = [
+      sq.n_backfilled == null ? null : ('已回填 ' + sq.n_backfilled),
+      sq.n_pending == null ? null : ('待回填 ' + sq.n_pending),
+      sq.next_ready_date ? ('下一可评 ' + sq.next_ready_date) : null,
+    ].filter(Boolean).join(' · ') || '—';
+    fill('dg-quality', canJudge ? (
+      '<table><thead><tr><th>评分档</th><th>样本</th><th>平均超额</th><th>胜率</th></tr></thead><tbody>' +
+      bands.map(b => '<tr><td class="num">' + esc(b.band) + '</td>' +
+        '<td class="num">' + b.n + '</td>' +
+        '<td class="num ' + clsOf(b.avg_excess) + '">' + pctp(b.avg_excess) + '</td>' +
+        '<td class="num">' + (b.win_rate == null ? '—' : (b.win_rate * 100).toFixed(0) + '%') + '</td></tr>').join('') +
+      '</tbody></table>' +
+      '<div class="ft" style="padding-top:8px">TOP5 超额 ' + pctp(sq.top5_excess) +
+      ' · 全样本 ' + pctp(sq.all_excess) +
+      ' · 单调性 ' + monotonic(bands) + '</div>'
+    ) : '<div class="empty">样本不足（已回填 ' + (sq.n_backfilled || 0) + ' 条）</div>');
+
+    // ── 3 分析结论质量 ──
+    const aq = q.analysis || {};
+    const labs = aq.by_label || [];
+    $('#dg-anote').textContent = [
+      aq.n_backfilled == null ? null : ('样本 ' + aq.n_backfilled),
+      aq.next_ready_date ? ('下一可评 ' + aq.next_ready_date) : null,
+    ].filter(Boolean).join(' · ') || '—';
+    fill('dg-analysis', labs.length ? (
+      '<table><thead><tr><th>结论</th><th>样本</th><th>平均收益</th><th>方向命中</th></tr></thead><tbody>' +
+      labs.map(b => '<tr><td class="' + (b.label === '看多' ? 'up' : b.label === '看空' ? 'dn' : 'flat') + '">' +
+        esc(b.label) + '</td><td class="num">' + b.n + '</td>' +
+        '<td class="num ' + clsOf(b.avg_ret) + '">' + pctp(b.avg_ret) + '</td>' +
+        '<td class="num">' + (b.hit_rate == null ? '观望不计入' : (b.hit_rate * 100).toFixed(0) + '%') + '</td></tr>').join('') +
+      '</tbody></table>' +
+      '<div class="ft" style="padding-top:8px">目标位命中 ' + pcts(aq.hit_target_rate == null ? null : aq.hit_target_rate * 100) +
+      ' · 止损命中 ' + pcts(aq.hit_stop_rate == null ? null : aq.hit_stop_rate * 100) + '</div>'
+    ) : '<div class="empty">暂无回填样本</div>');
+
+    // ── 4 明日行动清单 ──
+    const pos = a.positions || [], watch = a.watch || [], risks = a.risks || [];
+    $('#dg-act-note').textContent = (a.price_date || '—') + ' · 持仓 ' + pos.length +
+      ' · 观察 ' + watch.length + ' · 风险 ' + risks.length;
+    let html = '';
+    if (pos.length) {
+      html += '<table><thead><tr><th>持仓</th><th>数量</th><th>现价</th><th>距止损</th><th>距目标</th><th></th></tr></thead><tbody>' +
+        pos.map(p => '<tr><td><span class="num">' + esc(p.code) + '</span> ' + esc(p.name || '') + '</td>' +
+          '<td class="num">' + (p.quantity == null ? '—' : Number(p.quantity).toLocaleString('en-US')) + '</td>' +
+          '<td class="num">' + (p.last == null ? '—' : p.last) + '</td>' +
+          '<td class="num dn">' + pcts(p.to_stop_pct) + '</td>' +
+          '<td class="num up">' + pcts(p.to_target_pct) + '</td>' +
+          '<td>' + (p.triggered ? '<span class="chip bad">已触发' + (p.triggered === 'stop' ? '止损' : '目标') + '</span>' : '') + '</td></tr>').join('') +
+        '</tbody></table>';
+    }
+    if (watch.length) {
+      // 观察档常有 30+ 条（当日全部分析计划），全铺出来会把页面撑爆；
+      // 截断但**必须自报总数**，否则读者以为就这么多。
+      const SHOW = 20;
+      const shown = watch.slice(0, SHOW);
+      html += '<table><thead><tr><th>观察</th><th>方向</th><th>现价</th><th>触发条件</th></tr></thead><tbody>' +
+        shown.map(w => {
+          const conds = w.entry_conditions || [];
+          return '<tr><td><span class="num">' + esc(w.code) + '</span> ' + esc(w.name || '') + '</td>' +
+            '<td class="flat">' + esc(w.direction || '—') + '</td>' +
+            '<td class="num">' + (w.last == null ? '—' : w.last) + '</td>' +
+            '<td style="white-space:normal">' + (conds.length
+              ? '<details><summary style="cursor:pointer;color:var(--tx2)">' + conds.length + ' 条入场条件</summary>' +
+                '<div style="margin-top:6px;color:var(--tx2);font-size:12px">' +
+                conds.map(c => '· ' + esc(c)).join('<br>') + '</div></details>'
+              : '<span class="flat">—</span>') + '</td></tr>';
+        }).join('') + '</tbody></table>' +
+        (watch.length > SHOW
+          ? '<div class="ft" style="padding-top:6px">仅显示前 ' + SHOW + ' 条（共 ' + watch.length + ' 条）</div>'
+          : '');
+    }
+    if (!html) html = '<div class="empty">无持仓、无观察档（今日分析未给出可跟踪计划）</div>';
+    if (risks.length) {
+      html += '<div style="margin-top:10px">' + risks.map(r =>
+        '<div class="li"><span class="k">' + esc(r.kind || '风险') + '</span>' +
+        '<span class="v flat" style="white-space:normal">' + esc(r.text || '') + '</span></div>').join('') + '</div>';
+    }
+    fill('dg-actions', html);
+  }
+
+  // 分档单调性：本模块**只报实情**，不替数据圆场。
+  // 档位按高分→低分排列，平均超额应逐档不升；出现倒挂就如实说出几处，
+  // 不允许"允许 1 处抖动"这种口径 —— 那等于把"不单调"写成"成立"。
+  function monotonic(bands) {
+    const v = bands.map(b => b.avg_excess).filter(x => x != null);
+    if (v.length < 3) return '样本不足以判断';
+    let inv = 0;
+    for (let i = 1; i < v.length; i++) if (v[i] > v[i - 1]) inv++;
+    return inv === 0 ? '单调不升（成立）' : (inv + ' 处倒挂');
+  }
+
+  // ---------------------------------------------------------------- 启动
+  if (location.protocol === 'file:') {
+    ft.textContent = '本地预览 · 未连接 API';
+    $('#md').innerHTML = '<div class="empty">未连接 API</div>';
+    $('#arch').innerHTML = '<div class="empty">未连接 API</div>';
+    $('#pend').innerHTML = '<div class="empty">未连接 API</div>';
+    ['dg-quality', 'dg-analysis', 'dg-actions'].forEach(id =>
+      fill(id, '<div class="empty">未连接 API</div>'));
+    ['dg-screens', 'dg-analyses', 'dg-trades'].forEach(id => fill(id, rowsEmpty(4, '未连接 API')));
+    return;
+  }
+
+  Promise.all([get('/api/review/latest'), get('/api/review/archive'),
+    get('/api/review/digest'), get('/api/meta')])
+    .then(([rv, ar, dg, meta]) => {
+      if (rv.ok) {
+        const d = rv.data, rep = d.report;
+        if (rep.ok) {
+          showReport(rep.data, true);
+          $('#k-date').textContent = rep.data.date;
+          $('#top-date').textContent = '数据 ' + rep.data.date;
+          $('#k-chars').textContent = (rep.data.chars || 0).toLocaleString('en-US');
+          $('#k-file').textContent = rep.data.file;
+          $('#k-count').textContent = rep.data.history_count + ' 篇存档';
+          $('#src').textContent = d.stale === true ? '滞后' : '复盘';
+        } else {
+          $('#md').innerHTML = '<div class="empty err">' + errText(rep.error) + '</div>';
+          $('#k-date').textContent = '—';
+        }
+        renderStats(d.stats);
+        renderPending(d.pending);
+      } else {
+        $('#md').innerHTML = '<div class="empty err">' + errText(rv.error) + '</div>';
+        $('#k-date').textContent = '—';
+        $('#top-date').textContent = '数据 —';
+        renderStats({ok: false, error: rv.error});
+        renderPending({ok: false, error: rv.error});
+      }
+
+      if (ar.ok) renderArchive(ar.data.items || []);
+      else $('#arch').innerHTML = '<div class="empty err">' + errText(ar.error) + '</div>';
+
+      renderDigest(dg);
+
+      const demo = (window.bigaDemo ? bigaDemo.collect() : []);
+      ft.textContent = 'API ' + meta.data.version + ' · 数据 ' + (rv.as_of || '—') +
+        (demo.length ? ' · 演示 ' + demo.join(' · ') : '');
+    })
+    .catch(() => { ft.textContent = 'API 不可达'; $('#md').innerHTML = '<div class="empty err">API 不可达</div>'; renderDigest(null); });
+})();
+</script>
+</body>
+</html>

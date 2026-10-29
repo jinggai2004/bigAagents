@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>研究 · bigAagents</title>
+<link rel="stylesheet" href="../static/fonts/fonts.css">
+<link rel="stylesheet" href="../static/css/theme.css">
+<style>
+.legend{display:flex;gap:14px;align-items:center;font-size:11px;font-family:var(--mono);color:var(--tx2);padding:8px 2px 0}
+.legend i{display:inline-block;width:16px;height:2px;margin-right:6px;vertical-align:middle}
+.grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
+.gap .li{align-items:flex-start}
+.gap .k{width:96px}
+.gap .v{font-size:11px;color:var(--tx3);line-height:1.6}
+</style>
+</head>
+<body>
+<div class="app">
+<aside>
+  <div class="brand"><i>B</i><div><b>bigAagents</b><span>A-SHARE · MULTI-AGENT</span></div></div>
+  <nav class="nav">
+    <a href="index.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1.5" y="1.5" width="5.5" height="5.5" rx="1"/><rect x="9" y="1.5" width="5.5" height="5.5" rx="1"/><rect x="1.5" y="9" width="5.5" height="5.5" rx="1"/><rect x="9" y="9" width="5.5" height="5.5" rx="1"/></svg>仪表盘</a>
+    <a href="screening.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3h12l-4.5 5.5v5L6.5 15.5v-7L2 3z"/></svg>选股</a>
+    <a href="analysis.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="1.8"/><path d="M8 1v2.5M8 12.5V15M1 8h2.5M12.5 8H15"/></svg>深度分析</a>
+    <a href="watch.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1.5 13.5l4-5 3 2 5.5-7.5"/><path d="M11 3h3v3"/></svg>看盘</a>
+    <a href="intel.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="12.5" r="1.5"/><path d="M4.8 9.2a4.4 4.4 0 0 1 6.4 0M2.2 6.2a8.2 8.2 0 0 1 11.6 0"/></svg>情报</a>
+    <a href="desk.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1.5L14.5 5 8 8.5 1.5 5 8 1.5z"/><path d="M1.5 9l6.5 3.5L14.5 9"/></svg>交易台</a>
+    <a href="review.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 1.5h7l3 3v10H3z"/><path d="M10 1.5v3h3"/><path d="M5.5 8h5M5.5 10.5h5"/></svg>每日复盘</a>
+    <a href="research.html" class="on"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 1.5h4M7 1.5v4L3 13h10L9 5.5v-4"/></svg>研究</a>
+    <a href="chat.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 2.5h12v8H8l-3.5 3v-3H2z"/></svg>助手</a>
+    <a href="system.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 4h12M2 8h12M2 12h12"/><circle cx="5" cy="4" r="1.8"/><circle cx="11" cy="8" r="1.8"/><circle cx="7" cy="12" r="1.8"/></svg>系统</a>
+  </nav>
+  <div class="ft">v3 · LOCAL</div>
+</aside>
+<main>
+  <header class="top">
+    <h1>研究</h1>
+    <span class="sp"></span>
+    <span class="pill"><span class="dot"></span>本地回放</span>
+    <span class="pill num" id="top-date">数据 —</span>
+  </header>
+  <div class="wrap">
+    <div class="g4 r">
+      <div class="kpi"><label>总收益</label><div class="v num" id="k-ret">—</div><div class="d num flat" id="k-ret-sub">—</div></div>
+      <div class="kpi"><label>年化</label><div class="v num" id="k-ann">—</div><div class="d num flat" id="k-ann-sub">—</div></div>
+      <div class="kpi"><label>最大回撤</label><div class="v num" id="k-dd">—</div><div class="d num flat" id="k-dd-sub">—</div></div>
+      <div class="kpi"><label>夏普</label><div class="v num" id="k-sharpe">—</div><div class="d num flat" id="k-sharpe-sub">—</div></div>
+    </div>
+
+    <div class="side r" style="animation-delay:.06s">
+      <div class="pn">
+        <div class="ph"><b>净值</b>
+          <span class="sel"><select id="rec"><option value="">—</option></select></span>
+        </div>
+        <div class="pb">
+          <canvas class="cv" id="nav-cv" width="1200" height="200"></canvas>
+          <div class="legend">
+            <span><i style="background:var(--rd)"></i>策略</span>
+            <span><i style="background:var(--bl)"></i>基准</span>
+            <span id="nav-range" class="flat"></span>
+          </div>
+        </div>
+      </div>
+      <div class="pn">
+        <div class="ph"><b>指标</b><span id="metric-note">—</span></div>
+        <div class="pb lst" id="metrics"><div class="empty">读取中…</div></div>
+      </div>
+    </div>
+
+    <div class="pn r" style="animation-delay:.1s">
+      <div class="ph"><b>因子 IC</b><span id="ic-note">—</span></div>
+      <table>
+        <thead><tr><th>因子</th><th>方向</th><th>IC 均值</th><th>ICIR</th><th>t 值</th><th>IC&gt;0</th><th>期数</th><th>结论</th></tr></thead>
+        <tbody id="ic-body"><tr><td colspan="8" class="empty">读取中…</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="pn r" style="animation-delay:.14s">
+      <div class="ph"><b>分层收益</b><span id="layer-note">—</span></div>
+      <div class="pb grid3" id="layers"><div class="empty">读取中…</div></div>
+    </div>
+
+    <div class="pn gap r" style="animation-delay:.18s">
+      <div class="ph"><b>数据缺口</b><span id="gap-note">—</span></div>
+      <div class="pb lst" id="gaps"><div class="empty">读取中…</div></div>
+    </div>
+
+    <div class="pn r" style="animation-delay:.22s">
+      <div class="ph"><b>🧪 过拟合体检</b><span id="val-note">—</span></div>
+      <div class="pb lst" id="validate"><div class="empty">读取中…</div></div>
+    </div>
+
+    <div class="pn r" style="animation-delay:.26s">
+      <div class="ph"><b>🧬 Walk-forward 权重重估</b><span id="wf-note">—</span></div>
+      <table>
+        <thead><tr><th>测试年</th><th>重估权重</th><th>OOS 超额(重估)</th><th>OOS 超额(基线)</th><th>复合 IC(重估)</th><th>复合 IC(基线)</th></tr></thead>
+        <tbody id="wf-body"><tr><td colspan="6" class="empty">读取中…</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="pn r" style="animation-delay:.3s">
+      <div class="ph"><b>💰 交易盈亏分解</b><span id="pnl-note">—</span></div>
+      <div class="pb grid3" id="pnl-summary"><div class="empty">读取中…</div></div>
+      <table>
+        <thead><tr><th>代码</th><th>数量</th><th>入场摩擦</th><th>出场摩擦</th><th>持有</th><th>反事实</th><th>费用</th></tr></thead>
+        <tbody id="pnl-body"><tr><td colspan="7" class="empty">读取中…</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="ft" id="ft">连接 API 中…</div>
+  </div>
+</main>
+</div>
+<script src="../static/js/demo.js"></script>
+<script>
+(() => {
+  const $ = (s) => document.querySelector(s);
+  const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const get = (u) => fetch(u, {cache: 'no-store'}).then(r => r.json());
+  const ERR = {missing: '无数据', empty: '解析失败', invalid: '参数非法', offline: '离线'};
+  const errText = (e) => (ERR[e && e.type] || (e && e.type) || '不可用');
+  const ft = $('#ft');
+  const pct = (v, d) => (v == null || isNaN(v)) ? '—' : (v > 0 ? '+' : '') + Number(v).toFixed(d == null ? 2 : d) + '%';
+  const n = (v, d) => (v == null || isNaN(v)) ? '—' : Number(v).toFixed(d == null ? 2 : d);
+  const cls = (v) => v == null ? 'flat' : (v > 0 ? 'up' : (v < 0 ? 'dn' : 'flat'));
+
+  // ---------------------------------------------------------------- 净值
+  function drawNav(nav, bench) {
+    const cv = $('#nav-cv');
+    if (!cv || !cv.getContext) return;
+    const ctx = cv.getContext('2d');
+    const w = cv.width, h = cv.height;
+    ctx.clearRect(0, 0, w, h);
+    if (!nav || nav.length < 2) {
+      ctx.fillStyle = '#556074'; ctx.font = '13px monospace'; ctx.textAlign = 'center';
+      ctx.fillText('无净值曲线', w / 2, h / 2);
+      return;
+    }
+    const all = nav.map(p => Number(p.total_value))
+      .concat((bench || []).map(p => Number(p.total_value)));
+    const min = Math.min.apply(null, all), max = Math.max.apply(null, all);
+    const span = (max - min) || 1, pad = 16;
+    const x = i => pad + i * (w - pad * 2) / (nav.length - 1);
+    const y = v => h - pad - (v - min) / span * (h - pad * 2);
+    if (bench && bench.length > 1) {
+      ctx.beginPath();
+      bench.forEach((p, i) => {
+        const bx = pad + i * (w - pad * 2) / (bench.length - 1);
+        i ? ctx.lineTo(bx, y(p.total_value)) : ctx.moveTo(bx, y(p.total_value));
+      });
+      ctx.strokeStyle = '#4C9AFF'; ctx.lineWidth = 1.2;
+      ctx.setLineDash([4, 3]); ctx.stroke(); ctx.setLineDash([]);
+    }
+    // 策略（A 股口径：期末高于期初＝红）
+    const up = Number(nav[nav.length - 1].total_value) >= Number(nav[0].total_value);
+    ctx.beginPath();
+    nav.forEach((p, i) => i ? ctx.lineTo(x(i), y(p.total_value)) : ctx.moveTo(x(i), y(p.total_value)));
+    ctx.strokeStyle = up ? '#F0483E' : '#1FBF75';
+    ctx.lineWidth = 1.6; ctx.stroke();
+    ctx.lineTo(x(nav.length - 1), h - pad); ctx.lineTo(x(0), h - pad); ctx.closePath();
+    const grd = ctx.createLinearGradient(0, 0, 0, h);
+    grd.addColorStop(0, up ? 'rgba(240,72,62,.20)' : 'rgba(31,191,117,.20)');
+    grd.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = grd; ctx.fill();
+    ctx.fillStyle = '#556074'; ctx.font = '11px monospace'; ctx.textAlign = 'left';
+    ctx.fillText(max.toLocaleString('en-US', {maximumFractionDigits: 0}), pad, pad + 4);
+    ctx.fillText(min.toLocaleString('en-US', {maximumFractionDigits: 0}), pad, h - 2);
+    ctx.textAlign = 'right';
+    ctx.fillText(nav[0].date + ' → ' + nav[nav.length - 1].date, w - pad, h - 2);
+  }
+
+  // ---------------------------------------------------------------- 回测
+  function renderBacktest(z) {
+    if (!z.ok) {
+      $('#metrics').innerHTML = '<div class="empty err">' + errText(z.error) + '</div>';
+      $('#nav-range').textContent = errText(z.error);
+      ['k-ret','k-ann','k-dd','k-sharpe'].forEach(id => { $('#' + id).textContent = '—'; });
+      drawNav([], []);
+      return;
+    }
+    const d = z.data, m = d.metrics || {};
+    $('#top-date').textContent = '数据 ' + (d.end || '—');
+    $('#k-ret').textContent = pct(m.total_return);
+    $('#k-ret').className = 'v num ' + cls(m.total_return);
+    $('#k-ret-sub').textContent = d.trades_total + ' 笔 · 胜率 ' + n(m.win_rate, 1) + '%';
+
+    $('#k-ann').textContent = pct(m.annual_return);
+    $('#k-ann').className = 'v num ' + cls(m.annual_return);
+    $('#k-ann-sub').textContent = d.start + ' → ' + d.end;
+
+    $('#k-dd').textContent = pct(m.max_drawdown);
+    $('#k-dd').className = 'v num ' + cls(m.max_drawdown);
+    $('#k-dd-sub').textContent = 'Calmar ' + n(m.calmar_ratio);
+
+    $('#k-sharpe').textContent = n(m.sharpe_ratio);
+    $('#k-sharpe').className = 'v num ' + cls(m.sharpe_ratio);
+    $('#k-sharpe-sub').textContent = '信息比率 ' + n(m.information_ratio);
+
+    const rows = [
+      ['盈亏比', n(m.profit_loss_ratio)],
+      ['月度胜率', m.monthly_win_rate == null ? '—' : n(m.monthly_win_rate, 1) + '%'],
+      ['平均仓位', m.avg_position_pct == null ? '—' : n(m.avg_position_pct, 1) + '%'],
+      ['换手率', m.turnover_rate == null ? '—' : n(m.turnover_rate, 0) + '%'],
+      ['拒单', m.rejected_orders == null ? '—' : String(m.rejected_orders)],
+      ['交易笔数', m.total_trades == null ? '—' : String(m.total_trades)],
+    ];
+    Object.entries(d.yearly_returns || {}).forEach(([k, v]) => rows.push([k + ' 年', pct(v)]));
+    $('#metrics').innerHTML = rows.map(r =>
+      '<div class="li"><span class="k">' + esc(r[0]) + '</span><span class="v num">' + esc(r[1]) + '</span></div>').join('');
+    $('#metric-note').textContent = d.file;
+
+    drawNav(d.nav_curve || [], d.benchmark_nav || []);
+    const nav = d.nav_curve || [];
+    if (nav.length) {
+      const a = Number(nav[0].total_value), b = Number(nav[nav.length - 1].total_value);
+      $('#nav-range').textContent = ((b - a) / a * 100).toFixed(2) + '% · ' + nav.length + ' 个交易日';
+    }
+
+    const sel = $('#rec');
+    sel.innerHTML = (d.records || []).map(r =>
+      '<option value="' + esc(r.file) + '">' +
+      esc(r.file.replace('backtest_', '').replace('.json', '')) + '</option>').join('');
+    sel.value = d.file;
+  }
+
+  // ---------------------------------------------------------------- 因子
+  function renderFactors(z) {
+    if (!z.ok) {
+      $('#ic-body').innerHTML = '<tr><td colspan="8" class="empty err">' + errText(z.error) + '</td></tr>';
+      $('#ic-note').textContent = errText(z.error);
+      $('#layers').innerHTML = '<div class="empty">' + errText(z.error) + '</div>';
+      $('#gaps').innerHTML = '<div class="empty">' + errText(z.error) + '</div>';
+      return;
+    }
+    const d = z.data;
+    const rows = d.summary || [];
+    $('#ic-note').textContent = d.names + ' 只 · ' + d.periods + ' 期 · 持有 ' + d.horizon + ' 日 · ' +
+      (d.generated_at || '—');
+    $('#ic-body').innerHTML = rows.length ? rows.map(r =>
+      '<tr><td>' + esc(r['因子']) + '</td><td class="flat" style="font-size:11px">' + esc(r['方向']) + '</td>' +
+      '<td class="num ' + cls(r['IC均值']) + '">' + n(r['IC均值'], 4) + '</td>' +
+      '<td class="num ' + cls(r['ICIR']) + '">' + n(r['ICIR'], 3) + '</td>' +
+      '<td class="num ' + cls(r['t值']) + '">' + n(r['t值'], 2) + '</td>' +
+      '<td class="num flat">' + (r['IC>0比例'] == null ? '—' : (r['IC>0比例'] * 100).toFixed(0) + '%') + '</td>' +
+      '<td class="num flat">' + (r['期数'] == null ? '—' : r['期数']) + '</td>' +
+      '<td>' + (r['结论'] ? '<span class="chip' + (/无效|相反|弱/.test(r['结论']) ? ' warn' : '') + '">' +
+        esc(r['结论']) + '</span>' : '—') + '</td></tr>').join('')
+      : '<tr><td colspan="8" class="empty">无因子结果</td></tr>';
+
+    const layered = d.layered || {};
+    const cards = Object.entries(layered).map(([key, v]) => {
+      const label = (rows.find(r => r.key === key) || {})['因子'] || key;
+      const vals = (v.rows || []).map(g => Number(g['平均收益%']));
+      const mx = Math.max.apply(null, vals.concat([0.001]));
+      const mn = Math.min.apply(null, vals.concat([0]));
+      const width = (x) => Math.min(100, Math.abs(x) / (x >= 0 ? mx : Math.abs(mn) || 1) * 100).toFixed(0);
+      return '<div class="pn"><div class="ph"><b>' + esc(label) + '</b><span>' +
+        (v['单调'] ? '单调' : '非单调') + ' · 多空差 ' + n(v['多空差%']) + '%</span></div><div class="pb">' +
+        (v.rows || []).map(g => {
+          const val = Number(g['平均收益%']);
+          const bg = val >= 0 ? 'linear-gradient(90deg,#c03a32,var(--rd))'
+            : 'linear-gradient(90deg,#177a4e,var(--gn))';
+          return '<div class="bar"><b style="width:74px">' + esc(g['组']) + '</b>' +
+            '<div class="t"><i style="width:' + width(val) + '%;background:' + bg + '"></i></div>' +
+            '<span class="n num ' + cls(val) + '">' + pct(g['平均收益%']) + '</span></div>';
+        }).join('') + '</div></div>';
+    });
+    $('#layers').innerHTML = cards.length ? cards.join('') : '<div class="empty">无分层结果</div>';
+    $('#layer-note').textContent = Object.keys(layered).length + ' 个因子 · ' + (d.groups || 5) + ' 组';
+
+    const un = Object.entries(d.unavailable || {});
+    $('#gaps').innerHTML = un.length ? un.map(([k, v]) =>
+      '<div class="li"><span class="k">' + esc(k) + '</span><span class="v">' + esc(v) + '</span></div>').join('')
+      : '<div class="empty">无缺口记录</div>';
+    const st = d.snapshot_status || {};
+    $('#gap-note').textContent = st.dates != null
+      ? ('截面快照 ' + st.dates + '/' + st.need + ' 日') : (un.length + ' 项');
+  }
+
+  // ---------------------------------------------------------------- 过拟合体检
+  function renderValidate(z) {
+    const el = $('#validate');
+    if (!z.ok) {
+      el.innerHTML = '<div class="empty">' + errText(z.error) + ' · ' + esc(z.error && z.error.msg || '') + '</div>';
+      $('#val-note').textContent = errText(z.error);
+      return;
+    }
+    const d = z.data, mt = d.multiple_testing || {};
+    const dsr = mt.dsr || {}, pbo = mt.pbo || {};
+    $('#val-note').textContent = 'N=' + (mt.n_trials || d.n_results || '—') + ' 组 · ' + (d.built_at || '—');
+    const dsrTxt = dsr.ok
+      ? 'p=' + n(dsr.p_value, 4) + (dsr.significant ? ' ⇒ 显著' : ' ⇒ 不显著（大概率是挑出来的运气）') +
+        (dsr.degraded ? ' · ⚠️未校正' : '')
+      : '无法计算';
+    const pboTxt = pbo.ok
+      ? n(pbo.pbo, 3) + (pbo.warn ? ' ⇒ ⚠️ 过拟合警报' : ' ⇒ 未触发警戒线')
+      : '—';
+    const rows = [
+      ['试验数 N', String(mt.n_trials || '—')],
+      ['DSR（Deflated Sharpe）', dsrTxt],
+      ['SR*（hurdle）', dsr.sr_star == null ? '—' : n(dsr.sr_star, 4) + '（' + (dsr.hurdle_source || '—') + '）'],
+      ['PBO（CSCV）', pboTxt],
+      ['网格', [d.grid.thresholds, d.grid.atr_mults, d.grid.holding_days]
+        .map(a => Array.isArray(a) ? a.length + ' 档' : '—').join(' × ')],
+      ['最优配置', mt.best_config
+        ? ('阈值 ' + mt.best_config.threshold + ' / ATR ' + mt.best_config.atr_mult
+           + ' / 持有 ' + mt.best_config.holding_days + ' 日') : '—'],
+    ];
+    el.innerHTML = rows.map(r =>
+      '<div class="li"><span class="k">' + esc(r[0]) + '</span><span class="v num">' + esc(r[1]) + '</span></div>').join('');
+  }
+
+  // ---------------------------------------------------------------- Walk-forward
+  function renderWalkforward(z) {
+    const body = $('#wf-body');
+    if (!z.ok) {
+      body.innerHTML = '<tr><td colspan="6" class="empty">' + errText(z.error) + ' · ' +
+        esc(z.error && z.error.msg || '') + '</td></tr>';
+      $('#wf-note').textContent = errText(z.error);
+      return;
+    }
+    const hs = Object.entries(z.data.horizons || {});
+    const allFolds = hs.flatMap(([, h]) => h.folds || []);
+    if (!allFolds.length) {
+      body.innerHTML = '<tr><td colspan="6" class="empty">无折记录</td></tr>';
+      $('#wf-note').textContent = '无折记录';
+      return;
+    }
+    $('#wf-note').textContent = '训 ' + (z.data.train_years || '—') + ' 年测 1 年 · ' +
+      hs.map(([h, v]) => 'T+' + h + ': ' + ((v.summary || {}).n_folds || 0) + ' 折').join(' · ');
+    body.innerHTML = allFolds.map(f => {
+      const w = Object.entries(f.weights_refit || {}).map(([k, v]) =>
+        k.replace('_20', '').replace('_align', '排列') + ':' + Number(v).toFixed(2)).join(' ') || '（无可配置权重）';
+      const fmt = (o) => (o && o.top_excess_mean != null) ? pct(o.top_excess_mean * 100, 3) : '—';
+      const ic = (o) => (o && o.composite_ic_mean != null) ? n(o.composite_ic_mean, 4) : '—';
+      return '<tr><td class="num flat">' + esc(f.test_year) + '</td>' +
+        '<td style="font-size:11px">' + esc(w) + '</td>' +
+        '<td class="num ' + cls(f.oos_refit && f.oos_refit.top_excess_mean) + '">' + fmt(f.oos_refit) + '</td>' +
+        '<td class="num ' + cls(f.oos_baseline && f.oos_baseline.top_excess_mean) + '">' + fmt(f.oos_baseline) + '</td>' +
+        '<td class="num flat">' + ic(f.oos_refit) + '</td>' +
+        '<td class="num flat">' + ic(f.oos_baseline) + '</td></tr>';
+    }).join('');
+  }
+
+  // ---------------------------------------------------------------- 盈亏分解
+  function renderAttributions(z) {
+    if (!z.ok) {
+      $('#pnl-summary').innerHTML = '<div class="empty">' + errText(z.error) + ' · ' + esc(z.error && z.error.msg || '') + '</div>';
+      $('#pnl-body').innerHTML = '<tr><td colspan="7" class="empty">' + errText(z.error) + '</td></tr>';
+      $('#pnl-note').textContent = errText(z.error);
+      return;
+    }
+    const d = z.data, s = d.summary || {};
+    $('#pnl-note').textContent = d.n_trips + ' 回合 · ' + (d.accounts || []).length + ' 账户 · ' +
+      (d.degraded ? 'degraded ' + d.degraded : '无降级');
+    const cards = [
+      ['入场摩擦均值', s.entry_gap_avg_pct == null ? '—' : pct(s.entry_gap_avg_pct, 3)],
+      ['出场摩擦均值', s.exit_gap_avg_pct == null ? '—' : pct(s.exit_gap_avg_pct, 3)],
+      ['持有收益均值', s.holding_avg_pct == null ? '—' : pct(s.holding_avg_pct, 3)],
+      ['反事实均值', s.counterfactual_avg_pct == null ? '—' : pct(s.counterfactual_avg_pct, 3)],
+      ['费用合计', s.fees_total == null ? '—' : '¥' + n(s.fees_total, 2)],
+      ['回合数', String(d.n_trips)],
+    ];
+    $('#pnl-summary').innerHTML = cards.map(c =>
+      '<div class="pn"><div class="ph"><b>' + esc(c[0]) + '</b></div><div class="pb"><div class="v num">' +
+      esc(c[1]) + '</div></div></div>').join('');
+    const trips = (d.trips || []).slice(0, 30);
+    $('#pnl-body').innerHTML = trips.length ? trips.map(t =>
+      '<tr><td class="num flat">' + esc(t.code) + '</td><td class="num flat">' + esc(t.qty) + '</td>' +
+      '<td class="num ' + cls(t.entry_gap_pct) + '">' + pct(t.entry_gap_pct, 3) + '</td>' +
+      '<td class="num ' + cls(t.exit_gap_pct) + '">' + pct(t.exit_gap_pct, 3) + '</td>' +
+      '<td class="num ' + cls(t.holding_pct) + '">' + pct(t.holding_pct, 3) + '</td>' +
+      '<td class="num ' + cls(t.counterfactual_pct) + '">' + pct(t.counterfactual_pct, 3) + '</td>' +
+      '<td class="num flat">' + (t.fees == null ? '—' : '¥' + n(t.fees, 2)) + '</td></tr>').join('')
+      : '<tr><td colspan="7" class="empty">无可展示回合（全部 degraded 或无成交）</td></tr>';
+  }
+
+  // ---------------------------------------------------------------- 启动
+  if (location.protocol === 'file:') {
+    ft.textContent = '本地预览 · 未连接 API';
+    $('#metrics').innerHTML = '<div class="empty">未连接 API</div>';
+    $('#ic-body').innerHTML = '<tr><td colspan="8" class="empty">未连接 API</td></tr>';
+    return;
+  }
+
+  $('#rec').addEventListener('change', (e) => {
+    get('/api/research/backtest?file=' + encodeURIComponent(e.target.value))
+      .then(z => renderBacktest(z))
+      .catch(() => renderBacktest({ok: false, error: {type: 'proxy'}}));
+  });
+
+  Promise.all([get('/api/research/backtest'), get('/api/research/factors'), get('/api/meta'),
+               get('/api/research/backtest/validate'), get('/api/research/walkforward'),
+               get('/api/research/attributions')])
+    .then(([bt, fa, meta, va, wf, at]) => {
+      renderBacktest(bt);
+      renderFactors(fa);
+      renderValidate(va);
+      renderWalkforward(wf);
+      renderAttributions(at);
+      const demo = (window.bigaDemo ? bigaDemo.collect() : []);
+      ft.textContent = 'API ' + meta.data.version + ' · 回测 ' + (bt.as_of || '—') +
+        ' · 因子 ' + (fa.ok ? (fa.data.generated_at || '—') : errText(fa.error)) +
+        (demo.length ? ' · 演示 ' + demo.join(' · ') : '');
+    })
+    .catch(() => { ft.textContent = 'API 不可达'; });
+})();
+</script>
+</body>
+</html>

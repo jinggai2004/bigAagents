@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>阿深 · 房间</title>
+<!-- 嵌入式「阿深房间」：给主站 iframe 用（助手界面右列）。
+     与 index.html（整页桌宠）的区别：**不挂**调试面板/命令栏/气泡输入，只留
+     房间 + 人物 + 顶部状态条 + 底部时钟；对话在主界面完成。
+     复用同一份 room.js / modelgirl.js / schedule.js / assets/ashen.glb，不复制渲染逻辑。
+     参数：?mode=stand|type|sleep &mood=neutral|happy|sad -->
+<style>
+  :root{--bg:#0B0E14;--sf1:#11161F;--line:#232C3B;--tx:#E8ECF2;--tx2:#8B94A7;--tx3:#556074;
+        --cy:#2DD4BF;--mono:'JetBrains Mono',ui-monospace,Consolas,monospace;
+        --sans:'PingFang SC','Microsoft YaHei',sans-serif}
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--tx);font-family:var(--sans)}
+  #wrap{position:fixed;inset:0;display:flex;flex-direction:column}
+  .bar{display:flex;align-items:center;gap:8px;padding:0 12px;height:42px;flex:none;
+       background:var(--sf1);border-bottom:1px solid var(--line)}
+  .bar .n{font-size:13px;font-weight:600;line-height:1.2}
+  .bar .s{font-size:9px;color:var(--tx3);font-family:var(--mono);letter-spacing:.06em;margin-top:2px}
+  .bar .sp{flex:1}
+  .chip{display:inline-flex;align-items:center;gap:5px;font-size:10px;font-family:var(--mono);
+        color:var(--cy);background:rgba(45,212,191,.1);border:1px solid rgba(45,212,191,.3);
+        border-radius:99px;padding:2px 8px;white-space:nowrap}
+  .chip .dot{width:5px;height:5px;border-radius:50%;background:var(--cy);box-shadow:0 0 6px var(--cy)}
+  #stage{flex:1 1 auto;position:relative;min-height:0;background:#181C24;cursor:grab;
+         touch-action:none}
+  #stage.drag{cursor:grabbing}
+  #stage canvas{display:block;width:100%;height:100%}
+  /* ── 交互坞（2026-10-27 加）──────────────────────────────────────
+     为什么要有它：房间是竖长条（aspect≈0.5），6.4×5.4 的地板只覆盖中间，
+     相机必然落在地板前缘之外 ⇒ 画面下方原本露出一条背景色，像"房间悬空"。
+     与其硬把相机拉近（那样书架和画像会被裁掉），不如把下方这块留给交互——
+     既填掉了空白，又让阿深从"一张会动的图"变成"能点、能问"的东西。 */
+  #dock{flex:none;background:var(--sf1);border-top:1px solid var(--line);
+        padding:9px 12px 10px;display:flex;flex-direction:column;gap:8px}
+  #say{font-size:11.5px;line-height:1.55;color:var(--tx2);font-family:var(--sans);
+       min-height:34px;position:relative;padding-left:23px}
+  #say::before{content:'';position:absolute;left:6px;top:4px;width:7px;height:7px;
+       border-radius:50%;background:var(--cy);box-shadow:0 0 7px var(--cy);opacity:.75}
+  #say b{color:var(--tx);font-weight:500}
+  #say .em{color:var(--cy)}
+  .asks{display:flex;flex-wrap:wrap;gap:5px}
+  .asks button{flex:0 0 auto;border:1px dashed #2E3949;background:transparent;color:var(--tx2);
+        font-size:10.5px;font-family:var(--sans);padding:3px 9px;border-radius:99px;cursor:pointer;
+        transition:border-color .15s,color .15s,border-style .15s}
+  .asks button:hover{border-color:var(--cy);color:var(--cy);border-style:solid}
+  .asks button:disabled{opacity:.4;cursor:default}
+  .ask-hint{font-size:9px;color:var(--tx3);font-family:var(--mono);letter-spacing:.04em}
+  /* 输入行（2026-10-28）：房间原来"不挂气泡输入"，问一句必须跳到左边助手。
+     但左边是**通用助手**，它答阿深的事要靠工具转述 —— 人称和上下文都变了。
+     这一行让用户能直接对它本人说话。 */
+  .askrow{display:flex;gap:6px;align-items:center}
+  .askrow input{flex:1;min-width:0;height:27px;border:1px solid var(--line);border-radius:6px;
+        background:#0E131B;color:var(--tx);font:11.5px/1.4 var(--sans);
+        padding:0 8px;outline:none}
+  .askrow input:focus{border-color:var(--cy)}
+  .askrow input::placeholder{color:var(--tx3)}
+  .askrow button{flex:none;height:27px;padding:0 11px;border:1px solid rgba(45,212,191,.35);
+        background:rgba(45,212,191,.12);color:var(--cy);border-radius:6px;cursor:pointer;
+        font:12px var(--mono);transition:background .15s}
+  .askrow button:hover:not(:disabled){background:rgba(45,212,191,.22)}
+  .askrow button:disabled{opacity:.45;cursor:default}
+  .foot{display:flex;align-items:center;gap:8px;padding:0 12px;height:34px;flex:none;
+        background:var(--sf1);border-top:1px solid var(--line);font-size:10px;color:var(--tx3);
+        font-family:var(--mono);white-space:nowrap;overflow:hidden}
+  .foot .k{border:1px solid var(--line);border-radius:4px;padding:1px 6px;flex:none}
+  .foot .sp{flex:1}
+  #sched{overflow:hidden;text-overflow:ellipsis}
+  #fallback{position:absolute;inset:0;display:none;place-items:center}
+  #fallback img{max-width:100%;max-height:100%;object-fit:contain;opacity:.9}
+  #hint{position:absolute;left:0;right:0;bottom:6px;text-align:center;
+        font:10px/1.4 var(--mono);color:#8B94A7;pointer-events:none;transition:opacity .45s}
+</style>
+<script type="importmap">
+  { "imports": { "three": "./vendor/three.module.js" } }
+</script>
+</head>
+<body>
+<div id="wrap">
+  <div class="bar">
+    <div>
+      <div class="n">阿深 · 鲸鱼交易员</div>
+      <div class="s" id="sub">DEEPSEEK · 载入中</div>
+    </div>
+    <div class="sp"></div>
+    <span class="chip"><span class="dot"></span><span id="chip">待机</span></span>
+  </div>
+
+  <div id="stage">
+    <div id="fallback"><img src="./assets/ashen_preview.png" alt="阿深"></div>
+    <div id="hint">房间载入中…</div>
+  </div>
+
+  <div id="dock">
+    <div id="say">载入中…</div>
+    <!-- 快捷指令分两组（2026-10-28）：
+         · 「问阿深」——问的是它**自己**的事（在等什么/为什么不动），
+           走 /api/desk/ashen/chat 由它本人第一人称答，不绕到左边
+         · 「问助手 ↗」——个股技术面、情报这类需要工具链的，阿深手里没有，
+           照旧转发给左边通用助手（它才是能查数据的那一个）
+         ⚠️ 原来 4 条全转发：点"阿深今天"会跳到左边，由助手用第三人称转述
+         "它今天跑了 6 轮"。**转述不是互动** —— 人称变了、上下文丢了。 -->
+    <div class="asks" id="asks">
+      <button data-q="你现在在等什么？为什么盯这个价位？" data-local="1">你在等什么</button>
+      <button data-q="今天六轮你为什么一直没动手？" data-local="1">为什么不动</button>
+      <button data-q="帮我看看宁德时代的技术面">看个股 ↗</button>
+      <button data-q="今天有什么值得关注的？">问情报 ↗</button>
+    </div>
+    <div class="askrow">
+      <input id="q" type="text" maxlength="200" autocomplete="off"
+             placeholder="问阿深…（它只答自己账户和判断的事）">
+      <button id="send" title="发送（Enter）">→</button>
+    </div>
+  </div>
+
+  <div class="foot">
+    <span class="k" id="clk">模拟时钟 --:--</span>
+    <span id="sched">—</span>
+    <span class="sp"></span>
+    <span class="ask-hint">拖动可转视角 · 点角色会说话</span>
+  </div>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { Room } from './js/room.js';
+import { ModelGirl } from './js/modelgirl.js';
+import { WhaleGirl } from './js/character.js';
+import { Schedule } from './js/schedule.js';
+
+const Q = new URLSearchParams(location.search);
+const MODE = Q.get('mode') || 'stand';
+const MOOD = Q.get('mood') || 'neutral';
+
+const stage = document.getElementById('stage');
+const hint = document.getElementById('hint');
+const subEl = document.getElementById('sub');
+const chipEl = document.getElementById('chip');
+const clkEl = document.getElementById('clk');
+const schedEl = document.getElementById('sched');
+const sayEl = document.getElementById('say');
+
+let girl = null, room = null, schedule = null;
+let renderer, scene, camera, ambient, sun, lamp;
+let raf = 0, last = 0, inView = true, ready = false;
+
+const px = () => [stage.clientWidth || 1, stage.clientHeight || 1];
+
+function degrade(why) {
+  stage.style.display = 'none';
+  const f = document.getElementById('fallback');
+  f.style.display = 'grid';
+  hint.style.opacity = '1';
+  hint.textContent = why || '3D 不可用，已退回静态图';
+  console.warn('[ashen-room]', why);
+}
+
+// 屏幕：工作=行情终端 · 午休/自由=游戏视频 · 睡觉/出门=熄屏（与 main.js 同一套判据）
+function screenModeFor(state) {
+  if (!state) return 'work';
+  if (state.anim === 'type' || state.anim === 'stand') return 'work';
+  if (state.anim === 'sleep') return 'off';
+  return 'play';
+}
+
+// 拖动视角：只做**小幅**绕行（±0.55rad≈31°）与抬降（-0.35~+0.5rad）。
+// 不做自由轨道：房间只有正面做完整（背面是空的），转过去会看到穿帮，
+// 反倒让人觉得"做残了"。小幅度已经足够产生"这东西能动手"的反馈。
+const orbit = { yaw: 0, pitch: 0 };
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+
+function fit() {
+  if (!renderer) return;
+  const [w, h] = px();
+  const aspect = w / h;
+  renderer.setSize(w, h, false);
+  camera.aspect = aspect;
+  // 侧栏里的房间是"竖长条"：水平视野 = 垂直视野 × aspect，aspect 越小越要拉远，
+  // 否则书桌/地毯会被裁掉；上限 1.62 是"再远人物就成一个小点"的边界。
+  // ⚠️ lookAt 要压在 0.6 而不是 0.85：抬得太高会有一半画面是空墙。
+  const k = Math.min(1.62, Math.max(0.95, 0.92 / aspect));
+  // 以 lookAt 点为圆心绕行，yaw=0 时等价于原来的固定机位（z = 5.3k）
+  const radius = 5.3 * k + 0.6;
+  camera.position.set(
+    0.1 + Math.sin(orbit.yaw) * radius,
+    1.85 + orbit.pitch * 1.6,
+    -0.6 + Math.cos(orbit.yaw) * radius
+  );
+  camera.lookAt(0.1, 0.58, -0.6);
+  camera.updateProjectionMatrix();
+}
+
+function boot() {
+  const [w, h] = px();
+  try {
+    renderer = new THREE.WebGLRenderer({ antialias: true });
+  } catch (e) {
+    degrade('此环境不支持 WebGL');
+    return Promise.resolve();
+  }
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setSize(w, h, false);
+  stage.appendChild(renderer.domElement);
+
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x181C24);
+  // 雾只在 12~30 之间生效，而房间本体（含地板）离相机最远约 11，**碰不到**；
+  // 吃雾的只有下面那两块兜底板的远端 ⇒ 它们会自然融进背景色，
+  // 不然就是一条"地板到这里突然变黑"的硬边。
+  scene.fog = new THREE.Fog(0x181C24, 12, 30);
+  camera = new THREE.PerspectiveCamera(50, w / h, 0.1, 100);
+
+  // 灯光引用要给 room.updateSky —— 昼夜/台灯由房间自己算
+  ambient = new THREE.AmbientLight(0xFFFFFF, 0.75);
+  sun = new THREE.DirectionalLight(0xFFF2DD, 0.9); sun.position.set(4, 6, 3);
+  lamp = new THREE.PointLight(0xFFCA7A, 0, 6); lamp.position.set(-0.87, 1.3, -2.05);
+  scene.add(ambient, sun, lamp);
+
+  room = new Room(scene);
+
+  // 兜底地板/天花板：`room.js` 的房间是 6.4×5.4×3.0 的盒子，只覆盖中间。
+  // 而竖长条取景必须把相机放在盒子**之外**（否则宽度装不下书架和画像），
+  // 于是画面上方露出「盒子顶」之外的背景、下方露出「地板前缘」之外的地面，
+  // 各是一条硬边，看着像房间悬空。补两块大得多的板子把这两条吃掉——
+  // 不改 room.js，桌宠整页不需要它（那边视野宽，两条边本来就在画面外）。
+  // ⚠️ 颜色要贴着房间本体：水泥灰会把「补丁」暴露得比空白更明显。
+  const skirt = new THREE.Mesh(
+    new THREE.PlaneGeometry(36, 48),
+    new THREE.MeshLambertMaterial({ color: 0xC0A886 })    // 取地板木纹的中调
+  );
+  skirt.rotation.x = -Math.PI / 2;
+  skirt.position.set(0, -0.02, 0);
+  scene.add(skirt);
+
+  const ceil = new THREE.Mesh(
+    new THREE.PlaneGeometry(36, 48),
+    new THREE.MeshLambertMaterial({ color: 0xE2DCCF, side: THREE.DoubleSide })
+  );
+  ceil.rotation.x = -Math.PI / 2;
+  ceil.position.set(0, 3.08, 0);      // 略高于房间自带天花板(3.0)，避免共面闪烁
+  scene.add(ceil);
+
+  fit();
+
+  const cfgP = fetch('./schedule.json').then(r => r.json())
+    .catch(() => ({ timetable: [], states: {}, spots: {} }));
+
+  return cfgP.then((cfg) => {
+    schedule = new Schedule(cfg);
+    schedule.update();
+    applyStatus();
+
+    return ModelGirl.create(scene, './assets/ashen.glb').then((g) => {
+      girl = g;
+      const spot = (cfg.spots && cfg.spots.sofa) || { pos: [0.55, 0, 0.55], face: 0 };
+      girl.appearAt({ pos: [0.35, 0, 0.5], face: spot.face != null ? 0 : 0 });
+      girl.setMode(MODE);
+      girl.setMood(MOOD);
+      girl.faceCamera(camera.position);
+      room.setScreenMode(screenModeFor(schedule.state));
+      ready = true;
+      hint.style.opacity = '0';
+      document.documentElement.dataset.ashenReady = '1';
+      try { parent.postMessage({ type: 'ashen-ready' }, '*'); } catch (e) { /* 跨域就算了 */ }
+    }).catch((e) => {
+      // 模型挂不上还有房间：不整块降级，只把人物退成占位体
+      console.warn('[ashen-room] 模型载入失败，回退占位体:', e);
+      girl = new WhaleGirl(scene);
+      girl.setMode(MODE);
+      ready = true;
+      hint.style.opacity = '0';
+      document.documentElement.dataset.ashenReady = 'placeholder';
+    });
+  });
+}
+
+function applyStatus() {
+  const st = schedule && schedule.state;
+  const label = (st && st.label) || '待机';
+  subEl.textContent = 'DEEPSEEK · ' + label;
+  chipEl.textContent = label;
+  schedEl.textContent = st ? (label + (st.lines && st.lines[0] ? ' · ' + st.lines[0] : '')) : '今日排期已结束';
+  if (schedule) clkEl.textContent = '模拟时钟 ' + schedule.hhmm();
+  updateSay();                     // 排期一变，坞里的那句话跟着换
+}
+
+// ================================================================
+// 交互坞：说话 / 点击人物 / 快捷指令 / 真实值班状态
+// ================================================================
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g,
+  (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
+
+// 手写台词而不是让模型生成：这几句是**交互反馈**，必须在 0ms 内出来。
+// 真去调模型点一下等 3 秒，比不说话更糟。
+const LINES = [
+  '老板，我在。要问就直接点下面几个，或者回中间那栏打字。',
+  '手上没仓位的时候，最该干的事就是等——别为了动手而动手。',
+  '盯得越勤，手越痒。该盯哪几只我替你挑出来，剩下的交给纪律。',
+  '要问个股就直说要哪只，别让我猜代码。',
+  '我说的每句话都记着，下次复盘一起算对错。',
+];
+
+let ASHEN = null;          // /api/desk/ashen 的 data（拿不到就退回排期文案）
+let pokeTimer = 0;
+// 对过话之后的锁定截止时间：这段时间内不让轮询把问答刷回状态行。
+// 声明在这里（而不是用到它的那段代码旁边）是因为 `updateSay` 也读它，
+// 而 `updateSay` 被异步回调调用 —— 放太靠后容易被误读成"可以先读后声明"。
+let sayPinned = 0;
+
+function say(html) {
+  if (sayEl) sayEl.innerHTML = html;
+}
+
+// 最新一轮**真的调了模型**的结论（跳过轮的 summary 是空的，不能拿它当"它说的话"）
+function latestRun() {
+  const runs = ((ASHEN && ASHEN.today) || {}).runs || [];
+  let best = null;
+  runs.forEach((r) => {
+    if (!r || !String(r.summary || '').trim()) return;
+    if (!best || String(r.created_at || '') >= String(best.created_at || '')) best = r;
+  });
+  return best;
+}
+
+const KW = {price_below: '跌破', price_above: '涨破', stop_loss: '止损',
+            take_profit: '止盈', time: '定时'};
+
+// 「它在等什么」—— 来自 /api/desk/ashen 的 armed（与它自己 prompt 里那段同源）。
+// 空着不是"没内容"：它嘴上说"等 28 元"、条件表里却一条都没有，意味着
+// 价位到了不会叫醒它。这件事必须让用户看得见，不然"互动"就是单方面的。
+//
+// ⚠️ 只在它**这一轮真的说了在等**时才提"没挂条件"：每句话后面都挂一个
+//    "没挂条件"会很吵，而用户真正要知道的是"它说在等、其实没挂"这件事。
+function armedLine(run) {
+  const a = (ASHEN && ASHEN.armed) || {};
+  if (a.available === false) return '等待条件读取失败（不是没挂）';
+  const rows = a.rows || [];
+  if (!rows.length) {
+    const saidWaiting = run && /等|观望|回踩|再看|破位|等待/.test(String(run.summary || ''));
+    return saidWaiting ? '⚠️ 说了在等，但没挂条件（价位到了不会叫它）' : '';
+  }
+  return '在等 ' + rows.map((c) => {
+    const v = c.wake_at ? (c.wake_at + ' 定时')
+      : (c.threshold != null ? c.threshold
+        : (c.threshold_pct != null ? (c.threshold_pct * 100).toFixed(1) + '%' : '—'));
+    return c.code + ' ' + (KW[c.kind] || c.kind) + ' ' + v;
+  }).join('、');
+}
+
+// 顶部那句台词。优先级：**它自己刚说过的话** > 空状态说明 > 排期文案。
+// ⚠️ 2026-10-28 之前这里是一行模板（"建仓权 L2 · 池 3 只 · 今天已跑 4 轮 ·
+//    净值 100.0 万"）—— 那是仪表盘，不是人在说话。它每轮都有 ≤80 字结论
+//    落库，却在房间里从没说过一句，这才是"互动性差"的第一因。
+function summarizeAshen() {
+  if (!ASHEN) return null;
+  const a = ASHEN.autonomy || {};
+  const t = ASHEN.today || {};
+  const ct = t.counts || {};
+  const acct = ASHEN.account || {};
+
+  // 先取最新那一轮：`armedLine` 要用它判断"这一轮嘴上有没有说在等"
+  const r = latestRun();
+
+  // 次行保留状态事实：仪表盘别丢，只是别当主角
+  const facts = ['建仓权 <b>' + esc(a.level || '—') + '</b>'];
+  const mine = (ASHEN.pools || {}).ashen || {};
+  facts.push('池 <span class="em">' + (mine.count == null ? '—' : mine.count) + '</span> 只');
+  if (ct.scheduled_llm) facts.push('今天跑了 ' + ct.scheduled_llm + ' 轮');
+  if (acct.total_value) facts.push('净值 <span class="em">' +
+    (acct.total_value / 10000).toFixed(1) + '</span> 万');
+  const armed = armedLine(r);
+  if (armed) facts.push(armed);
+  const sub = '<div class="ask-hint" style="margin-top:5px">' + facts.join(' · ') + '</div>';
+
+  if (r) {
+    const hm = String(r.created_at || '').slice(11, 16);
+    // 手动轮的 slot 名是"手动"，排班轮是"14:40"——后者与时刻相同，
+    // 无条件加括号会变成"14:40（14:40）"，所以只在不同时补
+    const stamp = (hm && hm !== String(r.slot || '')) ? ('（' + hm + '）') : '';
+    return '<span class="em">' + esc(r.slot || '—') + stamp +
+      '</span> ' + esc(r.summary) + sub;
+  }
+  // 一句结论都没有：说清是哪一种"没有"，别让页面停在一句"载入中"
+  if (!(t.runs || []).length) return '今天还没到我的班次（09:40 起）。' + sub;
+  const skipped = (t.runs || []).filter((x) => x.status === 'skipped').length;
+  return '今天跑了 ' + (t.runs || []).length + ' 格，其中 ' + skipped +
+    ' 格在预筛就判"不值得看"（跳过的格没有结论可讲）。' + sub;
+}
+
+function updateSay() {
+  // 刚跟用户对过话 ⇒ 别让 60s 轮询把问答刷回状态行（否则用户问完一分钟
+  // 就看着自己的问题被"建仓权 L2 · 池 3 只"顶掉）
+  if (Date.now() < sayPinned) return;
+  const s = summarizeAshen();
+  if (s) { say(s); return; }
+  const st = schedule && schedule.state;
+  if (st && st.label) {
+    const line = (st.lines && st.lines[0]) || '排期里没别的事。';
+    say('现在是「<span class="em">' + esc(st.label) + '</span>」——' + esc(line));
+  }
+}
+
+function poke() {
+  if (!ready) return;
+  // 点它 → 说它**自己刚说过的判断**；固定台词只在拿不到结论时兜底。
+  // 原来 5 句硬编码，点第二下就重复，像彩蛋不像对话。
+  const r = latestRun();
+  say(r ? ('<span class="em">' + esc(r.slot || '') + '</span> 我刚说的：' + esc(r.summary))
+        : LINES[Math.floor(Math.random() * LINES.length)]);
+  if (girl && girl.setMood) {
+    girl.setMood('happy');
+    clearTimeout(pokeTimer);
+    pokeTimer = setTimeout(() => {
+      if (girl && girl.setMood) girl.setMood(MOOD);
+    }, 1600);
+  }
+}
+
+// ── 拖动转视角 ─────────────────────────────────────────────────
+// 用 Pointer Events 而不是 mouse：触控板/触屏同理，且 setPointerCapture 能保证
+// 手指移出 stage 后 still 收到 move（否则一划出边界就"卡住"）。
+let drag = null;
+stage.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0 && e.pointerType === 'mouse') return;
+  drag = { x: e.clientX, y: e.clientY, yaw: orbit.yaw, pitch: orbit.pitch, moved: 0 };
+  stage.classList.add('drag');
+  try { stage.setPointerCapture(e.pointerId); } catch (err) { /* 老浏览器 */ }
+});
+stage.addEventListener('pointermove', (e) => {
+  if (!drag) return;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+  drag.moved = Math.max(drag.moved, Math.abs(dx) + Math.abs(dy));
+  orbit.yaw = clamp(drag.yaw + dx * 0.0055, -0.55, 0.55);
+  orbit.pitch = clamp(drag.pitch + dy * 0.0035, -0.35, 0.5);
+  fit();
+});
+function endDrag(e) {
+  if (!drag) return;
+  const moved = drag.moved;
+  drag = null;
+  stage.classList.remove('drag');
+  try { stage.releasePointerCapture(e.pointerId); } catch (err) { /* 忽略 */ }
+  // 位移很小 ⇒ 当成"点了一下"，让人物说话。
+  // ⚠️ 判据用累计位移而不是 click 事件：拖动结束时浏览器也会发 click，
+  //    只靠 click 会导致"每转一次视角人物就冒一句话"。
+  if (moved < 6) poke();
+}
+stage.addEventListener('pointerup', endDrag);
+stage.addEventListener('pointercancel', () => { drag = null; stage.classList.remove('drag'); });
+
+// ── 和阿深说话（2026-10-28）───────────────────────────────────────
+// 说的是**它自己**的事（在等什么/为什么不动/账户怎么样），所以由它本人答：
+// `POST /api/desk/ashen/chat`，第一人称、只读、不产生动作。
+//
+// ⚠️ 为什么不复用上面的 `ashen-ask`（转发给父页面）：那条路的回答者是**通用助手**，
+//    它要靠 `tool_ashen_status` 取数再用第三人称转述。用户问"你为什么不动"，
+//    得到的却是"它今天跑了 6 轮，没买"—— 人称变了、上下文丢了，等于没互动。
+//
+// ⚠️ `sayPinned`（声明在文件上方）：答话后 3 分钟内不让 60s 轮询把它刷回状态行。
+//    否则用户刚问完一句，一分钟后就看着自己的问题消失。
+const qEl = document.getElementById('q');
+const sendEl = document.getElementById('send');
+
+async function askAshen(text) {
+  const q = String(text || '').trim();
+  if (!q) return;
+  say('<span class="em">你</span> ' + esc(q) +
+      '<div style="margin-top:5px;color:var(--tx3)">…我想一下</div>');
+  sayPinned = Date.now() + 180000;
+  if (sendEl) sendEl.disabled = true;
+  try {
+    const r = await fetch('/api/desk/ashen/chat?q=' + encodeURIComponent(q),
+                          { method: 'POST' });
+    const z = await r.json();
+    if (!z || !z.ok) {
+      const why = (z && z.error && (z.error.detail || z.error.type)) || '接口不可达';
+      say('<span class="em">你</span> ' + esc(q) +
+          '<div style="margin-top:5px">我这边答不上来：' + esc(why) + '</div>');
+      return;
+    }
+    const a = (z.data && z.data.answer) || '';
+    const f = (z.data && z.data.facts) || {};
+    // 表情：后端把阿深回答末尾的【情绪】标记剥出来单传，这里驱动房间里的脸。
+    // 停留 8 秒而不是 poke 的 1.6 秒 —— 读完一段话要几秒，1.6 秒就恢复等于没变。
+    // `mood` 为空也要显式设 neutral：否则上一次的 happy 会一直挂在脸上。
+    if (girl && girl.setMood) {
+      girl.setMood((z.data && z.data.mood) || 'neutral');
+      clearTimeout(pokeTimer);
+      pokeTimer = setTimeout(() => {
+        if (girl && girl.setMood) girl.setMood(MOOD);
+      }, 8000);
+    }
+    say('<span class="em">你</span> ' + esc(q) +
+        '<div style="margin-top:5px">' + esc(a) + '</div>' +
+        '<div class="ask-hint" style="margin-top:4px">阿深本人 · 只读：它能聊自己的账本和判断，' +
+        '<b>但在这里下不了单</b>（下单要等排班那一轮按纪律判定）' +
+        (f.rounds ? ' · 读了你今天 ' + f.rounds + ' 轮判断' : '') + '</div>');
+    sayPinned = Date.now() + 180000;
+  } catch (e) {
+    say('<span class="em">你</span> ' + esc(q) +
+        '<div style="margin-top:5px">连不上主程序，我答不了。（从「助手」页进来才行）</div>');
+  } finally {
+    if (sendEl) sendEl.disabled = false;
+  }
+}
+
+function submitAsk() {
+  const v = qEl ? qEl.value : '';
+  if (qEl) qEl.value = '';
+  askAshen(v);
+}
+if (sendEl) sendEl.addEventListener('click', submitAsk);
+if (qEl) qEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); submitAsk(); }
+});
+
+// ── 快捷指令：本地能答的本地答，需要工具链的才转发 ───────────────
+// 转发走 postMessage 而不是 iframe 内自己 fetch：对话状态（会话 id、工具循环、
+// 流式渲染）全在父页面，这里再发一遍会变成一条孤立的消息，两边对不上账。
+let pendingAsk = null;
+window.addEventListener('message', (e) => {
+  const d = e.data || {};
+  if (d.type === 'ashen-ask-ack' && pendingAsk) { pendingAsk.ok = true; pendingAsk = null; }
+});
+
+document.querySelectorAll('.asks button').forEach((b) => {
+  b.addEventListener('click', () => {
+    const q = b.dataset.q || '';
+    if (!q) return;
+    // ├ 问阿深本人（在等什么 / 为什么不动）—— 它答得了，不用绕道
+    if (b.dataset.local) { askAshen(q); return; }
+    // └ 问助手（个股技术面 / 情报）—— 需要工具链，阿深手里没有
+    const token = { ok: false };
+    pendingAsk = token;
+    try { parent.postMessage({ type: 'ashen-ask', q }, '*'); } catch (e) { /* 跨域 */ }
+    b.disabled = true;
+    setTimeout(() => { b.disabled = false; }, 900);
+    setTimeout(() => {
+      // 父页面没应答 = 我是被单独打开的（或父页面还没挂监听）。
+      // 这时必须自己开口，否则就是"点了完全没反应"——那才是真的可交互性差。
+      if (pendingAsk === token) {
+        pendingAsk = null;
+        say('我是单独打开的，收不到外面的对话栏。请从「助手」页进来；要问就先记着：' +
+            '<span class="em">' + esc(q) + '</span>');
+      }
+    }, 800);
+  });
+});
+
+// ── 真实值班状态（同源接口；单独打开时会失败，静默）─────────────
+function loadAshen() {
+  fetch('/api/desk/ashen', { cache: 'no-store' })
+    .then((r) => r.json())
+    .then((z) => {
+      if (!z || !z.ok) return;
+      ASHEN = z.data || null;
+      updateSay();
+    })
+    .catch(() => { /* 单独打开 / 离线：保持排期文案 */ });
+}
+
+function loop(now) {
+  raf = requestAnimationFrame(loop);
+  if (!ready || document.hidden || !inView) { last = now; return; }
+  const dt = Math.min(0.05, (now - last) / 1000) || 0.016;
+  last = now;
+
+  schedule.update();
+  const hour = schedule.simDate.getHours() + schedule.simDate.getMinutes() / 60;
+
+  room.updateSky(hour, sun, ambient, lamp);
+  room.updateClock(schedule.simDate);
+  room.updateScreens(dt);
+  girl.update(dt);
+
+  // 状态一变化就刷新顶/底条（label 变了才写 DOM，别每帧动文本）
+  const label = (schedule.state && schedule.state.label) || '待机';
+  if (chipEl.textContent !== label) {
+    applyStatus();
+    room.setScreenMode(screenModeFor(schedule.state));
+  }
+  clkEl.textContent = '模拟时钟 ' + schedule.hhmm();
+
+  renderer.render(scene, camera);
+}
+
+new ResizeObserver(fit).observe(stage);
+new IntersectionObserver((es) => { inView = es[0].isIntersecting; }, { threshold: 0.01 })
+  .observe(stage);
+
+boot().then(() => {
+  if (ready) renderer.render(scene, camera);   // 首帧必跑，别留白
+  raf = requestAnimationFrame(loop);
+  loadAshen();                                 // 真实建仓权/池子/净值（失败就留在排期文案）
+  startAshenPolling();
+});
+
+// ── 轮询（2026-10-28 加）─────────────────────────────────────────
+// ⚠️ 原来 `loadAshen()` 只在载入时调一次 ⇒ 09:40 的数字一直挂到收盘。
+//    用户下午打开页面，看到的是"今天跑了 1 轮、净值 100.0 万"，而它其实已经
+//    跑完 6 轮。**这不只是数字过期**：房间那句话是"阿深在说话"的唯一载体，
+//    不刷新就等于它从早上起没再开过口。
+// 60s 一次、只读、页面不可见时跳过（省空转）；切回前台立刻补一次，
+// 否则用户切回来看到的还是切换前那份。
+let ashenTimer = 0;
+function startAshenPolling() {
+  if (ashenTimer) return;
+  ashenTimer = setInterval(() => { if (!document.hidden) loadAshen(); }, 60000);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) loadAshen();
+  });
+}
+</script>
+</body>
+</html>

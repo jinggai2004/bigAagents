@@ -1,0 +1,61 @@
+# Agent 框架
+langgraph>=0.3.0
+langchain-core>=0.3.0
+langchain-openai>=0.2.0
+
+# LLM
+openai>=1.50.0
+
+# 数据
+akshare>=1.14.0
+tushare>=1.4.0
+# BaoStock：历史估值回填（免 token；pandas>=2 必须打 DataFrame.append 垫片，
+# 见 data/panel_store.apply_baostock_pandas_shim）
+baostock>=0.9.4
+pandas>=2.2.0
+numpy>=1.26.0
+
+# 技术指标
+# 2026-10-25：移除 pandas-ta>=0.3.14 —— PyPI 只发过 0.3.14b0（预发布，pip 默认不匹配），
+# 该行让 `pip install -r requirements.txt` 整体失败；且全仓无 import（已 grep 核实）。
+# 真要用时写 pandas-ta>=0.3.14b0 并显式 `--pre`，或改用下面的 ta。
+ta
+
+# 前端
+# 注意：>=1.59 是"已验证可用"的下界。UI 已从 use_container_width 迁移到 width="stretch"，
+# 而该参数在旧版本（如 1.32）不存在，地板不抬高会在运行时直接 TypeError。
+streamlit>=1.59.0
+plotly>=5.22.0
+# 新前端（web/templates + FastAPI 只读层，2026-10-25 起 P1）：
+# uvicorn 本机已装但这里显式声明（新机器复现需要）；fastapi 此前未装未声明。
+# httpx：`fastapi.testclient.TestClient` 依赖它（契约测试 3455 项里 42 项用它）；
+# 缺了它 `pytest` 会在 import 阶段就红，而不是某个用例失败。
+fastapi>=0.115.0
+uvicorn>=0.30.0
+httpx>=0.27.0
+# pywebview（P6 exe 原生窗口）**可选**：不装则退回默认浏览器，不影响功能。
+# 打包依赖（PyInstaller）见 requirements-build.txt，不进运行时依赖。
+
+# 数据库
+sqlalchemy>=2.0.30
+
+# 调度
+apscheduler>=3.10.4
+
+# 配置
+pydantic-settings>=2.3.0
+pyyaml>=6.0.1
+python-dotenv>=1.0.0
+
+# 通知
+requests>=2.32.0
+
+# 选股
+pywencai>=1.0.0
+
+# 质量
+ruff>=0.5.0
+pytest>=8.2.0
+# ⚠️ 运行测试.bat 用 `-n 4`（并行 4 worker）；缺这个包时新机器会直接
+#    `unrecognized arguments: -n`（R9，2026-10-18 审查）。
+pytest-xdist>=3.5.0

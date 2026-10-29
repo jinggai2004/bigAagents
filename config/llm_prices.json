@@ -1,0 +1,67 @@
+{
+  "version": 1,
+  "as_of": "2026-10-23",
+  "currency": "CNY",
+  "unit": "per_million_tokens",
+  "_why": "单价必须外置：价格会变（DeepSeek 2026-08-17 改过峰谷定价、qwen 有阶梯），写死在代码里等于埋雷——历史成本会随改价被静默重算。本文件是**唯一来源**，core/llm_cost.py 只读不算常量。",
+  "sources": {
+    "deepseek": "DeepSeek 官方峰谷定价（2026-08-17 起），本项目核对记录见 output/样本验证计划与DeepSeek成本_2026-10-19.md §6.2",
+    "qwen": "阿里云百炼「模型调用计费」https://help.aliyun.com/zh/dashscope/developer-reference/token-api （2026-10-23 核对；qwen-max 2.4/9.6 另见 https://help.aliyun.com/zh/model-studio/qwen-max ）"
+  },
+  "peak_hours": [9, 10, 11, 14, 15, 16, 17],
+  "peak_note": "DeepSeek 高峰 = 北京时间 9:00-12:00 与 14:00-18:00，其余时段空闲半价。峰谷按**调用发生的小时**判定，不按任务名。",
+  "tier_note": "阿里云阶梯按**单次请求的输入 token** 判档，不是按天累计。官方文案是「输入≤32K」，本项目按 32768 处理；边界附近（32000~32768）误差对单次调用 <¥0.001，可忽略。",
+  "unknown_model": {
+    "input": 2.4,
+    "output": 9.6,
+    "_why": "未知模型按本项目最贵的在用模型（qwen-max）保守计。宁可高估——低估会让预算失守而无人察觉。"
+  },
+  "models": {
+    "deepseek-v4-flash": {
+      "input": 1.5,
+      "output": 4.5,
+      "peak_input": 3.0,
+      "peak_output": 9.0
+    },
+    "deepseek-v4-pro": {
+      "input": 4.5,
+      "output": 13.5,
+      "peak_input": 9.0,
+      "peak_output": 27.0
+    },
+    "deepseek-chat": {
+      "input": 1.5,
+      "output": 4.5,
+      "peak_input": 3.0,
+      "peak_output": 9.0
+    },
+    "deepseek-reasoner": {
+      "input": 4.5,
+      "output": 13.5,
+      "peak_input": 9.0,
+      "peak_output": 27.0
+    },
+    "qwen-max": {
+      "input": 2.4,
+      "output": 9.6
+    },
+    "qwen3.7-flash": {
+      "tiers": [
+        {"max_input": 32768, "input": 0.2, "output": 0.8},
+        {"max_input": null, "input": 0.6, "output": 2.4}
+      ]
+    },
+    "qwen3.8-flash": {
+      "input": 0.8,
+      "output": 2.7
+    },
+    "qwen-plus": {
+      "input": 0.8,
+      "output": 2.0
+    },
+    "qwen-turbo": {
+      "input": 0.3,
+      "output": 0.6
+    }
+  }
+}

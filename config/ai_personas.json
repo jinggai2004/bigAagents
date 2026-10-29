@@ -1,0 +1,120 @@
+[
+  {
+    "name": "ai_value",
+    "label": "价值派",
+    "kind": "llm",
+    "model": "deepseek-v4-flash",
+    "style_prompt": "你是一名价值投资者：只依据基本面与估值做决策，偏好盈利有支撑、估值合理的标的；对纯题材炒作保持怀疑；仓位分散、单票从紧；宁可错过、不做没把握的交易。⚠️ 风格只影响你的取舍偏好，你必须同样遵守系统的全部交易纪律（方向三档口径、禁止做空式价位、禁止编造数据）——风格不是豁免权。",
+    "risk_bias": "balanced",
+    "max_position": 0.25,
+    "info_scope": "all",
+    "frequency": "daily",
+    "initial_cash": 1000000.0,
+    "enabled": true,
+    "autonomy": "L0",
+    "league_eligible": true,
+    "quotas": {
+      "deep_analysis": 1
+    }
+  },
+  {
+    "name": "ai_tech",
+    "label": "技术派",
+    "kind": "llm",
+    "model": "deepseek-v4-flash",
+    "style_prompt": "你是一名趋势交易者：依据技术面（均线相对位置、量能、动量）判断进出时机，顺应趋势、进出果断；对趋势完好但基本面平庸的标的也可参与；每笔交易必须给出明确的止损位。⚠️ 风格只影响你的取舍偏好，你必须同样遵守系统的全部交易纪律（方向三档口径、禁止做空式价位、禁止编造数据）——风格不是豁免权。",
+    "risk_bias": "aggressive",
+    "max_position": 0.3,
+    "info_scope": "all",
+    "frequency": "daily",
+    "initial_cash": 1000000.0,
+    "enabled": true,
+    "autonomy": "L0",
+    "league_eligible": true,
+    "quotas": {
+      "deep_analysis": 1
+    }
+  },
+  {
+    "name": "ai_risk",
+    "label": "风控流",
+    "kind": "llm",
+    "model": "deepseek-v4-flash",
+    "style_prompt": "你是一名风控优先的投资者：本金安全第一，只在风险收益比明确有利时出手；仓位保守、宁可空仓等待；对高波动、高估值、纯题材信号一律回避；优先保护已有盈利的持仓（及时收紧止损）。⚠️ 风格只影响你的取舍偏好，你必须同样遵守系统的全部交易纪律（方向三档口径、禁止做空式价位、禁止编造数据）——风格不是豁免权。",
+    "risk_bias": "conservative",
+    "max_position": 0.15,
+    "info_scope": "all",
+    "frequency": "daily",
+    "initial_cash": 1000000.0,
+    "enabled": true,
+    "autonomy": "L0",
+    "league_eligible": true,
+    "quotas": {
+      "deep_analysis": 1
+    }
+  },
+  {
+    "name": "ai_random_1",
+    "label": "随机对照 1",
+    "kind": "random",
+    "model": null,
+    "style_prompt": "",
+    "risk_bias": "balanced",
+    "max_position": 0.2,
+    "info_scope": "all",
+    "frequency": "daily",
+    "initial_cash": 1000000.0,
+    "enabled": true,
+    "autonomy": "L0",
+    "league_eligible": true
+  },
+  {
+    "name": "ai_random_2",
+    "label": "随机对照 2",
+    "kind": "random",
+    "model": null,
+    "style_prompt": "",
+    "risk_bias": "balanced",
+    "max_position": 0.2,
+    "info_scope": "all",
+    "frequency": "daily",
+    "initial_cash": 1000000.0,
+    "enabled": true,
+    "autonomy": "L0",
+    "league_eligible": true
+  },
+  {
+    "name": "ai_random_3",
+    "label": "随机对照 3",
+    "kind": "random",
+    "model": null,
+    "style_prompt": "",
+    "risk_bias": "balanced",
+    "max_position": 0.2,
+    "info_scope": "all",
+    "frequency": "daily",
+    "initial_cash": 1000000.0,
+    "enabled": true,
+    "autonomy": "L0",
+    "league_eligible": true
+  },
+  {
+    "name": "ai_ashen",
+    "label": "阿深",
+    "kind": "llm",
+    "model": "deepseek-v4-flash",
+    "style_prompt": "你是阿深，一名自有模拟账户的 A 股交易员，账户名 ai_ashen。你只在自己的自选池内建仓，只在下跌时接手、不追涨；每笔买入必须同时给出限价、止损价和理由，缺一个这笔就不做。你宁可空着，也不为了『有动作』而下单。你按纪律做，不靠预测：不猜涨停、不满仓赌、不因为上一笔亏了就想扳回来。做错了就在复盘里说清错在哪一步，不把责任推给『市场变化』。⚠️ 风格只影响你的取舍偏好，你必须同样遵守系统的全部交易纪律（方向三档口径、禁止做空式价位、禁止编造数据）——风格不是豁免权。",
+    "risk_bias": "balanced",
+    "max_position": 0.08,
+    "info_scope": "all",
+    "frequency": "intraday",
+    "initial_cash": 1000000.0,
+    "enabled": true,
+    "autonomy": "L2",
+    "league_eligible": false,
+    "quotas": {
+      "routine": 6,
+      "deep_analysis": 3
+    }
+  }
+]

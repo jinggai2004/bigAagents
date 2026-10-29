@@ -1,0 +1,10 @@
+# 仅"打 exe"时需要，运行时不需要（见 scripts/build_exe.py）
+pyinstaller>=6.6.0
+
+# 原生窗口（独立窗口，无浏览器地址栏/标签页）。
+# 不装也能用：`launch_exe._open()` 会退回默认浏览器。
+# ⚠️ 打包时必须以 `--collect-all webview` + `--collect-all pythonnet` 收集
+#    （见 build_exe.COLLECT_ALL）：pywebview 的后端是运行时按平台名导入的，
+#    Windows 走 EdgeChromium ⇒ 依赖 pythonnet 的 `clr`，静态分析看不出来。
+# ⚠️ 目标机器需要 WebView2 运行时（Win10/11 一般随 Edge 自带）。
+pywebview>=5.1

@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>阿深 · 鲸鱼交易员</title>
+<link rel="icon" href="data:,">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; font-family: "Microsoft YaHei", "PingFang SC", system-ui, sans-serif; }
+  #app { position: fixed; inset: 0; }
+
+  .panel {
+    position: fixed; background: rgba(252, 251, 247, 0.92); border: 1px solid rgba(0,0,0,0.08);
+    border-radius: 12px; padding: 10px 14px; color: #2C2C2A; backdrop-filter: blur(4px);
+  }
+  #statusPanel { top: 14px; left: 14px; min-width: 190px; }
+  #statusPanel .name { font-size: 15px; font-weight: 600; }
+  #statusPanel .name small { font-weight: 400; color: #888780; font-size: 11px; margin-left: 6px; }
+  #statusPanel .row { margin-top: 6px; font-size: 13px; display: flex; align-items: center; gap: 8px; }
+  #stateChip { font-size: 11px; background: #E1F5EE; color: #085041; border-radius: 8px; padding: 1px 8px; }
+
+  #debugPanel { bottom: 14px; left: 14px; width: 250px; font-size: 12px; }
+  #debugPanel .row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+  #debugPanel label { width: 62px; color: #5F5E5A; flex: none; }
+  #debugPanel input[type=range] { flex: 1; accent-color: #185FA5; }
+  #debugPanel select { font-size: 12px; padding: 1px 4px; }
+  #debugPanel .chk { display: flex; align-items: center; gap: 5px; color: #5F5E5A; }
+
+  #cmdBar { bottom: 14px; left: 50%; transform: translateX(-50%); width: min(560px, 92vw); }
+  #cmdForm { display: flex; gap: 8px; }
+  #cmdInput {
+    flex: 1; border: 1px solid #D3D1C7; border-radius: 8px; padding: 8px 12px;
+    font-size: 13px; outline: none; background: #FFFFFF;
+  }
+  #cmdInput:focus { border-color: #185FA5; }
+  #cmdForm button {
+    border: none; border-radius: 8px; background: #2B3A67; color: #fff;
+    padding: 8px 18px; font-size: 13px; cursor: pointer;
+  }
+  .chips { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip {
+    font-size: 12px; background: #F1EFE8; border: 1px solid #D3D1C7; border-radius: 10px;
+    padding: 2px 10px; cursor: pointer; color: #444441;
+  }
+  .chip:hover { background: #E6F1FB; border-color: #185FA5; }
+
+  #bubble {
+    position: fixed; display: none; transform: translateX(-50%);
+    max-width: 300px; background: #FFFFFF; border: 1px solid #D3D1C7; border-radius: 12px;
+    padding: 8px 12px; font-size: 13px; color: #2C2C2A; pointer-events: none;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+  }
+  #bubble::after {
+    content: ""; position: absolute; left: 50%; bottom: -6px; transform: translateX(-50%);
+    border: 6px solid transparent; border-top-color: #FFFFFF; border-bottom: none;
+  }
+  #hint { top: 14px; right: 14px; font-size: 11px; color: #888780; }
+</style>
+<script type="importmap">
+  { "imports": { "three": "./vendor/three.module.js" } }
+</script>
+<script>
+  // 启动或运行期报错直接显示在页面上（3D 页无控制台时便于定位）
+  window.addEventListener('error', (e) => {
+    let el = document.getElementById('errBox');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'errBox';
+      el.style.cssText = 'position:fixed;top:70px;left:14px;max-width:480px;background:#FCEBEB;border:1px solid #A32D2D;color:#791F1F;border-radius:10px;padding:10px 14px;font:12px/1.5 monospace;z-index:99;white-space:pre-wrap;';
+      document.body.appendChild(el);
+    }
+    el.textContent += (e.message || e.error) + '\n  @ ' + (e.filename || '').split('/').pop() + ':' + e.lineno + '\n';
+  });
+</script>
+</head>
+<body>
+  <div id="app"></div>
+
+  <div class="panel" id="statusPanel">
+    <div class="name">阿深<small>DeepSeek 鲸鱼交易员 · P0 验证版</small></div>
+    <div class="row"><span id="clockLabel">--:--</span><span id="stateLabel">加载中…</span><span id="stateChip">待机</span></div>
+    <div class="row" style="color:#5F5E5A">心情：<span id="moodLabel">平静</span></div>
+  </div>
+
+  <div class="panel" id="debugPanel">
+    <div class="row"><label>时间快进</label><input type="range" id="timeSlider" min="0" max="1439" value="510"><span id="dbgTime"></span></div>
+    <div class="row"><label>流速</label>
+      <select id="speedSel">
+        <option value="1" selected>1× 真实</option>
+        <option value="60">60×</option>
+        <option value="300">300×</option>
+        <option value="0">暂停</option>
+      </select>
+    </div>
+    <div class="row"><label>模拟大盘</label><input type="range" id="moodSlider" min="-3" max="3" step="0.1" value="0.32"></div>
+    <div class="row chk"><input type="checkbox" id="dayToggle"><label for="dayToggle" style="width:auto">模拟非交易日（周末/假期）</label></div>
+  </div>
+
+  <div class="panel" id="cmdBar">
+    <form id="cmdForm">
+      <input id="cmdInput" placeholder="给阿深下命令，例如：大盘怎么样 / 今天选到什么股 / 复盘一下" autocomplete="off">
+      <button type="submit">发送</button>
+    </form>
+    <div class="chips">
+      <span class="chip" data-cmd="大盘怎么样">大盘怎么样</span>
+      <span class="chip" data-cmd="今天选到什么股">今天选到什么股</span>
+      <span class="chip" data-cmd="复盘一下">复盘一下</span>
+      <span class="chip" data-cmd="你在干嘛">你在干嘛</span>
+      <span class="chip" data-cmd="跳个舞">跳个舞</span>
+    </div>
+  </div>
+
+  <div class="panel" id="hint">拖动"时间快进"看阿深一天的状态流转 · 阿深已装骨骼和表情 v0.6.0</div>
+  <div id="bubble"></div>
+
+  <script type="module" src="./js/main.js"></script>
+</body>
+</html>

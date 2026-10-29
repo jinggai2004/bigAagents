@@ -1,0 +1,72 @@
+# ===== 敏感信息（绝不能入库）=====
+.env
+# 多厂商 LLM 注册表：可能含明文密钥（api_key 字段），默认不入库。
+# 结构以 config/llm_providers.example.json 为准。
+config/llm_providers.json
+
+# ===== Python 运行产物 =====
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# ===== 日志与临时文件 =====
+logs/
+temp/
+tests/temp/
+*.log
+# 测试输出存档（本地保留排查用，不入库）
+output/pytest_*.txt
+
+# ===== 数据库与生成数据 =====
+data/*.db
+data/backtest_records/
+data/trading_calendar.json
+output/daily_picks/
+# UI 长任务的结果与运行标记（core/ui_runs.py）
+output/ui_runs/
+
+# ===== 本地全市场面板与数据库备份（2026-10-18 P0-7）=====
+# data/panel/ 是 11.3M 行 parquet（约 300~600MB），可由 scripts/backfill_panel_baostock.py 重建
+# ⇒ 属于"生成数据"，绝不入库（一条 git add -A 就会把 676MB 灌进仓库）。
+data/panel/
+# portfolio.db 的滚动备份（每次迁移前自动生成，4 份 ≈88MB）
+data/*.db.bak_*
+# 兜底：任何 parquet 都不入版本库（目前仅面板使用）
+*.parquet
+
+# ===== 工具自身的工作目录（会话记忆/自动化配置，本地保留不入库）=====
+.workbuddy/
+
+# ===== 环境与IDE =====
+.venv/
+venv/
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# 新浪全市场代码清单的落盘缓存（运行时生成，7 天自动过期）
+data/stock_code_list.json
+data/industry_members.json
+# 东财题材概念成分落盘缓存（运行时生成，7 天自动过期，约 1MB）
+data/concept_members.json
+
+# ===== 2026-10-29 开源前补齐 =====
+# 打包产物（build_exe.py 输出；--noconfirm 会清 dist/，exe 同级 .env 已由脚本自动回填）
+dist/
+build/
+*.exe
+# 根级数据库（data/*.db 已忽略，这是 main 入口的库）
+/bigaagents.db
+# 运行时名称缓存（akshare 拉取，7 天过期）
+data/stock_names.json
+# 知乎真实 Cookie（只入库 .example 模板）
+config/zhihu_cookie.txt
+# 生成报告目录：个人研报/复盘不入库；前端开发文档（端点契约闸门）显式保留
+output/*
+!output/前端开发文档_2026-10-25.md
+
+# 根级 tushare stock_basic 缓存（运行时生成）
+/stock_basic_cache.json

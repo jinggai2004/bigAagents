@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>看盘 · bigAagents</title>
+<link rel="stylesheet" href="../static/fonts/fonts.css">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0B0E14;--sf1:#11161F;--sf2:#161D29;--sf3:#1E2635;--line:#232C3B;--line2:#2E3949;
+--tx:#E8ECF2;--tx2:#8B94A7;--tx3:#556074;--cy:#2DD4BF;--bl:#4C9AFF;--am:#F0B429;--rd:#F0483E;--gn:#1FBF75;
+--mono:'JetBrains Mono',ui-monospace,'Cascadia Mono',Consolas,monospace;--dsp:'Space Grotesk','PingFang SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif;--sans:'PingFang SC','Microsoft YaHei','Noto Sans CJK SC','Source Han Sans SC',sans-serif}
+body{background:var(--bg);color:var(--tx);font-family:var(--sans);font-size:13px;line-height:1.6;min-height:100vh}
+body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
+background:linear-gradient(rgba(45,212,191,.022) 1px,transparent 1px),linear-gradient(90deg,rgba(45,212,191,.022) 1px,transparent 1px);background-size:48px 48px}
+.app{display:grid;grid-template-columns:204px 1fr;min-height:100vh;position:relative;z-index:1}
+aside{background:var(--sf1);border-right:1px solid var(--line);padding:16px 10px;display:flex;flex-direction:column;gap:2px;position:sticky;top:0;height:100vh}
+.brand{display:flex;align-items:center;gap:9px;padding:2px 8px 16px}
+.brand i{width:22px;height:22px;border:1.5px solid var(--cy);border-radius:5px;display:grid;place-items:center;color:var(--cy);font-style:normal;font-family:var(--dsp);font-weight:700;font-size:12px;box-shadow:0 0 12px rgba(45,212,191,.25)}
+.brand b{font-family:var(--dsp);font-size:14px;letter-spacing:.01em;font-weight:500;display:block;line-height:1.2}
+.brand span{font-size:9px;color:var(--tx3);font-family:var(--mono);letter-spacing:.14em}
+.nav a{display:flex;align-items:center;gap:10px;padding:7px 10px;color:var(--tx2);text-decoration:none;border-left:2px solid transparent;border-radius:0 4px 4px 0;font-size:13px;transition:color .15s,background .15s}
+.nav a:hover{color:var(--tx);background:var(--sf2)}
+.nav a.on{color:var(--cy);border-left-color:var(--cy);background:linear-gradient(90deg,rgba(45,212,191,.09),transparent)}
+.nav svg{width:15px;height:15px;flex:none}
+.nav .ft{margin-top:auto;font-size:10px;color:var(--tx3);font-family:var(--mono);padding:8px;letter-spacing:.06em}
+main{display:flex;flex-direction:column;min-width:0}
+.top{height:46px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px;padding:0 20px;background:rgba(17,22,31,.88);position:sticky;top:0;z-index:5;backdrop-filter:blur(8px)}
+.top h1{font-size:14px;font-weight:500;font-family:var(--dsp)}
+.top .sp{flex:1}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:2px 9px;border:1px solid var(--line2);border-radius:99px;font-size:11px;color:var(--tx2);font-family:var(--mono)}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--am);box-shadow:0 0 6px var(--am)}
+.dot.cy{background:var(--cy);box-shadow:0 0 6px var(--cy)}
+.wrap{padding:20px;display:flex;flex-direction:column;gap:14px;max-width:1480px;width:100%}
+.pn{background:var(--sf1);border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.ph{display:flex;align-items:center;justify-content:space-between;padding:9px 14px;border-bottom:1px solid var(--line)}
+.ph b{font-size:12px;font-weight:500;letter-spacing:.03em}
+.ph span{font-size:11px;color:var(--tx3);font-family:var(--mono)}
+.pb{padding:14px}
+.g4{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.g2{display:grid;grid-template-columns:1.6fr 1fr;gap:14px}
+table{width:100%;border-collapse:collapse}
+th{font-size:11px;color:var(--tx3);font-weight:400;text-align:left;padding:7px 12px;border-bottom:1px solid var(--line);font-family:var(--mono);letter-spacing:.03em;white-space:nowrap}
+td{padding:8px 12px;border-bottom:1px solid rgba(35,44,59,.55);font-size:13px;white-space:nowrap}
+tr:last-child td{border-bottom:none}
+tbody tr:hover{background:var(--sf2)}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.up{color:var(--rd)}.dn{color:var(--gn)}.flat{color:var(--tx2)}
+.chip{display:inline-flex;align-items:center;gap:4px;padding:0 7px;border-radius:3px;font-size:11px;border:1px solid var(--line2);color:var(--tx2);font-family:var(--mono);line-height:18px}
+.chip.ok{color:var(--cy);border-color:rgba(45,212,191,.35);background:rgba(45,212,191,.06)}
+.chip.warn{color:var(--am);border-color:rgba(240,180,41,.35);background:rgba(240,180,41,.06)}
+/* 两轨自选（我的 / 阿深的）：tab 用 chip 形态，避免再加一层导航 */
+.wl-tabs{display:inline-flex;gap:4px;margin-left:10px}
+.wl-tab{padding:1px 9px;border-radius:99px;border:1px solid var(--line2);background:transparent;
+color:var(--tx3);font-size:11px;font-family:var(--mono);cursor:pointer;transition:color .15s,border-color .15s}
+.wl-tab:hover{color:var(--tx)}
+.wl-tab.on{color:var(--cy);border-color:rgba(45,212,191,.45);background:rgba(45,212,191,.08)}
+/* 备注/理由：名称下方的小字。阿深那栏＝"它为什么把这只票放进自选" */
+.td-sub{font-size:10px;color:var(--tx3);font-family:var(--sans);white-space:normal;
+max-width:240px;line-height:1.4;margin-top:1px}
+/* ── 自选股增删改（2026-10-27 加）────────────────────────────────
+   加这个之前页面只有读通道：底层 add_stock/remove_stock/update_stock 全都在、
+   AI 的 tool_manage_watchlist 也调得动，但**页面上没有任何入口**，
+   人只能跟模型说"帮我加进自选"——这就是"自选股没法增删"的根因。
+   加的时候列宽只多出 28px，靠把两个按钮压成 18×18 才不挤掉"状态"列。 */
+.ph .wl-add{margin-left:auto;margin-right:10px;display:inline-flex;gap:3px;align-items:center}
+.wl-add input{width:74px;background:var(--sf3);border:1px solid var(--line2);border-radius:3px;
+color:var(--tx);font-family:var(--mono);font-size:11px;padding:2px 6px;outline:none}
+.wl-add input:focus{border-color:var(--cy)}
+.wl-add button{width:20px;height:20px;padding:0;line-height:1;border-radius:3px;border:1px solid var(--line2);
+background:var(--sf2);color:var(--tx2);font-size:13px;cursor:pointer}
+.wl-add button:hover{border-color:var(--cy);color:var(--cy)}
+/* 操作列：常显但压得很低对比度，hover 该行才提亮（避免 20 行全是叉号） */
+.wl-ops{text-align:right;white-space:nowrap;padding-left:0}
+.wl-op{width:18px;height:18px;padding:0;line-height:16px;text-align:center;border-radius:3px;
+border:1px solid transparent;background:transparent;color:var(--tx3);font-size:12px;cursor:pointer;
+font-family:var(--mono);opacity:.45;transition:opacity .15s,color .15s,border-color .15s}
+tbody tr:hover .wl-op{opacity:1}
+.wl-op:hover{color:var(--cy);border-color:var(--line2)}
+.wl-op.del:hover{color:var(--gn);border-color:rgba(52,211,153,.4)}
+/* 写入结果提示：成功/失败都说话。失败必须显颜色——静默失败会让人以为"点了没反应" */
+.wl-msg{display:none;font-size:11px;font-family:var(--mono);padding:5px 14px;
+background:var(--sf2);border-bottom:1px solid var(--line)}
+.wl-msg.on{display:block}
+.wl-msg.ok{color:var(--cy)}
+.wl-msg.err{color:var(--am)}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:4px;border:1px solid var(--line2);background:var(--sf2);color:var(--tx);font-size:12px;cursor:pointer;font-family:var(--sans);transition:border-color .15s,color .15s;text-decoration:none}
+.btn:hover{border-color:var(--cy);color:var(--cy)}
+.idx{background:var(--sf1);border:1px solid var(--line);border-radius:6px;padding:12px 14px}
+.idx .r1{display:flex;justify-content:space-between;align-items:baseline}
+.idx label{font-size:11px;color:var(--tx3);font-family:var(--mono)}
+.idx .v{font-family:var(--dsp);font-size:21px;font-weight:500;margin-top:3px}
+.idx .d{font-size:11px;font-family:var(--mono);margin-top:1px}
+.bar{display:flex;align-items:center;gap:10px;padding:4px 0}
+.bar b{font-family:var(--mono);font-size:12px;font-weight:400;width:70px;color:var(--tx2)}
+.bar .t{flex:1;height:9px;background:var(--sf3);border-radius:2px;overflow:hidden;position:relative}
+.bar .t i{position:absolute;left:0;top:0;bottom:0;background:var(--rd);border-radius:2px}
+.bar .t i.neg{background:var(--gn)}
+.bar .n{font-family:var(--mono);font-size:11px;width:62px;text-align:right}
+.al{display:flex;gap:9px;padding:8px 0;border-bottom:1px solid rgba(35,44,59,.55);font-size:12px;align-items:flex-start}
+.al:last-child{border-bottom:none}
+.al .t{font-family:var(--mono);font-size:11px;color:var(--tx3);flex:none}
+.al .b{flex:1;color:var(--tx2)}
+.al .tag{flex:none}
+.ft{font-size:10px;color:var(--tx3);font-family:var(--mono);letter-spacing:.05em;padding:2px 4px}
+a:focus-visible,button:focus-visible{outline:2px solid var(--cy);outline-offset:1px}
+@keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.r{animation:rise .45s cubic-bezier(.16,1,.3,1) both}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+@media (max-width:960px){.app{grid-template-columns:1fr}aside{display:none}.g4{grid-template-columns:repeat(2,1fr)}.g2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="app">
+<aside>
+  <div class="brand"><i>B</i><div><b>bigAagents</b><span>A-SHARE · MULTI-AGENT</span></div></div>
+  <nav class="nav">
+    <a href="index.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1.5" y="1.5" width="5.5" height="5.5" rx="1"/><rect x="9" y="1.5" width="5.5" height="5.5" rx="1"/><rect x="1.5" y="9" width="5.5" height="5.5" rx="1"/><rect x="9" y="9" width="5.5" height="5.5" rx="1"/></svg>仪表盘</a>
+    <a href="screening.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3h12l-4.5 4.5v5L6.5 15.5v-7L2 3z"/></svg>选股</a>
+    <a href="analysis.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="1.8"/><path d="M8 1v2.5M8 12.5V15M1 8h2.5M12.5 8H15"/></svg>深度分析</a>
+    <a href="watch.html" class="on"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1.5 13.5l4-5 3 2 5.5-7.5"/><path d="M11 3h3v3"/></svg>看盘</a>
+    <a href="intel.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="12.5" r="1.5"/><path d="M4.8 9.2a4.4 4.4 0 0 1 6.4 0M2.2 6.2a8.2 8.2 0 0 1 11.6 0"/></svg>情报</a>
+    <a href="desk.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1.5L14.5 5 8 8.5 1.5 5 8 1.5z"/><path d="M1.5 9l6.5 3.5L14.5 9"/></svg>交易台</a>
+    <a href="review.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 1.5h7l3 3v10H3z"/><path d="M10 1.5v3h3"/><path d="M5.5 8h5M5.5 10.5h5"/></svg>每日复盘</a>
+    <a href="research.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 1.5h4M7 1.5v4L3 13h10L9 5.5v-4"/></svg>研究</a>
+    <a href="chat.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 2.5h12v8H8l-3.5 3v-3H2z"/></svg>助手</a>
+    <a href="system.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 4h12M2 8h12M2 12h12"/><circle cx="5" cy="4" r="1.8"/><circle cx="11" cy="8" r="1.8"/><circle cx="7" cy="12" r="1.8"/></svg>系统</a>
+  </nav>
+  <div class="ft">v3 · LOCAL</div>
+</aside>
+<main>
+  <header class="top">
+    <h1>看盘</h1>
+    <span class="sp"></span>
+    <button class="btn" id="refresh">刷新行情</button>
+    <span class="pill" id="src-pill"><span class="dot cy"></span>腾讯/新浪 · 实时</span>
+    <span class="pill num" id="cd">—</span>
+    <span class="pill num" id="clk">--:--:--</span>
+    <span class="pill" id="asof">数据 —</span>
+  </header>
+  <div class="wrap">
+    <div class="g4 r" id="idx-row">
+      <div class="idx"><div class="r1"><label>上证指数</label></div><div class="v num">—</div><div class="d num flat">—</div></div>
+      <div class="idx"><div class="r1"><label>深证成指</label></div><div class="v num">—</div><div class="d num flat">—</div></div>
+      <div class="idx"><div class="r1"><label>创业板指</label></div><div class="v num">—</div><div class="d num flat">—</div></div>
+      <div class="idx"><div class="r1"><label>沪深300</label></div><div class="v num">—</div><div class="d num flat">—</div></div>
+    </div>
+    <div class="g2 r" style="animation-delay:.06s">
+      <div class="pn">
+        <div class="ph">
+          <b>自选股</b>
+          <div class="wl-tabs">
+            <button class="wl-tab on" data-owner="user" title="我自己加的自选">我的</button>
+            <button class="wl-tab" data-owner="ashen" title="阿深自己研究的清单（人也能改，会标成 manual）">阿深</button>
+          </div>
+          <div class="wl-add">
+            <input id="wl-code" maxlength="6" inputmode="numeric" placeholder="6位代码"
+                   autocomplete="off" title="输入 6 位代码后回车加入当前清单">
+            <button id="wl-add-btn" title="加入当前清单（回车也可）">＋</button>
+          </div>
+          <span id="watch-note">—</span>
+        </div>
+        <div class="wl-msg" id="wl-msg"></div>
+        <table>
+          <thead><tr><th>代码</th><th>名称</th><th>现价</th><th>涨跌幅</th><th>成交额</th><th>换手</th><th>状态</th><th></th></tr></thead>
+          <tbody id="watch-body">
+            <tr><td colspan="8" style="color:var(--tx3)">加载中…</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <div class="pn">
+          <div class="ph"><b>行业资金</b><span id="ind-note">—</span></div>
+          <div class="pb" id="ind-body">
+            <div class="bar"><b>—</b><div class="t"><i style="width:0%"></i></div><span class="n num flat">—</span></div>
+          </div>
+        </div>
+        <div class="pn">
+          <div class="ph"><b>外盘</b><span id="us-note">—</span></div>
+          <div class="pb" id="us-body">
+            <div class="bar"><b>—</b><div class="t"><i style="width:0%"></i></div><span class="n num flat">—</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="pn r" style="animation-delay:.1s">
+      <div class="ph"><b>异动</b><span id="alerts-note">—</span></div>
+      <div class="pb" id="alerts">
+        <div class="al"><span class="t num">--:--</span><span class="b" style="color:var(--tx3)">加载中…</span></div>
+      </div>
+    </div>
+    <div class="ft" id="ft">静态演示数据</div>
+  </div>
+</main>
+</div>
+<script>
+(() => {
+  const $ = (s) => document.querySelector(s);
+  const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const num = (v, d = 2) => (v == null || isNaN(v)) ? '—' : Number(v).toFixed(d);
+  // A 股口径：涨红跌绿（与服务端令牌一致，不用反）
+  const UP = '#F0483E', DN = '#1FBF75', FLAT = '#7C8798';
+  const cls = (v) => (v == null ? 'flat' : (v > 0 ? 'up' : (v < 0 ? 'dn' : 'flat')));
+  const color = (v) => (v == null ? FLAT : (v > 0 ? UP : (v < 0 ? DN : FLAT)));
+  const pct = (v) => (v == null ? '—' : (v > 0 ? '+' : '') + Number(v).toFixed(2) + '%');
+
+  setInterval(() => {
+    const d = new Date(), p = n => String(n).padStart(2, '0');
+    $('#clk').textContent = p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+  }, 1000);
+
+  const ft = $('#ft');
+  if (location.protocol === 'file:') { ft.textContent = '本地预览 · 未连接 API · 演示数据'; return; }
+
+  const get = (u) => fetch(u + (u.includes('?') ? '&' : '?') + '_=' + Date.now(), {cache: 'no-store'})
+    .then(r => r.json());
+
+  // 20 点收盘价 → 64×20 的折线（算在客户端：服务端只给数，不给画法）
+  const spark = (arr, v) => {
+    if (!arr || arr.length < 2) return '';
+    const w = 64, h = 20, lo = Math.min(...arr), hi = Math.max(...arr), span = (hi - lo) || 1;
+    const pts = arr.map((x, i) =>
+      (i / (arr.length - 1) * w).toFixed(1) + ',' +
+      (h - (x - lo) / span * h).toFixed(1)).join(' ');
+    return '<svg width="64" height="20" viewBox="0 0 64 20"><polyline points="' + pts +
+      '" fill="none" stroke="' + color(v) + '" stroke-width="1.5" stroke-linejoin="round"/></svg>';
+  };
+
+  let asOf = null;
+
+  function loadIndices() {
+  get('/api/watch/indices').then(b => {
+    if (!b.ok) throw new Error(b.error.type);
+    const d = b.data;
+    asOf = d.as_of;
+    $('#asof').textContent = '数据 ' + (d.as_of || '—');
+    $('#src-pill').innerHTML = '<span class="dot ' + (d.live ? 'cy' : 'am') + '"></span>' +
+      (d.live ? '腾讯/新浪 · 实时' : '行情源不可用');
+    $('#idx-row').innerHTML = d.indices.map(r => {
+      const p = r.price, v = r.change_pct;
+      const tag = r.basis === 'close' ? '<span class="chip warn" style="margin-left:6px">收盘</span>'
+        : (r.stale ? '<span class="chip warn" style="margin-left:6px">过期</span>' : '');
+      return '<div class="idx"><div class="r1"><label>' + esc(r.name) + '</label>' + spark(r.spark, v) + tag +
+        '</div><div class="v num">' + (p == null ? '—' : Number(p).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})) +
+        '</div><div class="d num ' + cls(v) + '">' + (v == null ? '—' : pct(v) + ' ' + (v >= 0 ? '↑' : '↓')) +
+        '</div></div>';
+    }).join('');
+    if (d.note) $('#asof').textContent += ' · ' + d.note;
+  }).catch(e => {
+    $('#idx-row').innerHTML = '<div class="idx" style="grid-column:1/-1"><div class="d num flat">指数不可用：' + esc(e.message) + '</div></div>';
+  });
+  }
+
+  // ── 两轨自选 ────────────────────────────────────────────────────
+  // 我的 / 阿深的。两栏**互相可见、互不可改**：这个页面只读；
+  // 阿深清单只有它自己的研究轮能增删（你的通道是"提名"，见报告 P1）。
+  let wlOwner = 'user';
+  const OWNER_NAME = { user: '我的', ashen: '阿深' };
+
+  function paintTabs(counts) {
+    document.querySelectorAll('.wl-tab').forEach(t => {
+      const o = t.dataset.owner, n = (counts || {})[o];
+      t.textContent = OWNER_NAME[o] + (n == null ? '' : ' ' + n);
+    });
+  }
+
+  function loadWatch() {
+  get('/api/watch/watchlist?owner=' + encodeURIComponent(wlOwner)).then(b => {
+    if (!b.ok) throw new Error(b.error.type);
+    const d = b.data;
+    paintTabs(d.counts);
+    const suffix = d.owner === 'ashen' ? ' · 阿深自选（只读）' : '';
+    $('#watch-note').textContent = d.available + '/' + d.total + ' 只' +
+      (d.live ? ' · 实时' : ' · 无报价') + suffix + (d.note ? ' · ' + d.note : '');
+    if (!d.rows.length) {
+      const msg = d.owner === 'ashen' ? '阿深还没有自己的自选（它的研究轮会往里加，你也可以直接加）' : '自选股为空，用右上角输入框加一只';
+      $('#watch-body').innerHTML = '<tr><td colspan="8" style="color:var(--tx3)">' + msg + '</td></tr>';
+      return;
+    }
+    $('#watch-body').innerHTML = d.rows.map(r => {
+      const amt = r.amount_wan == null ? '—' : (r.amount_wan / 1e4).toFixed(2) + '亿';
+      const st = !r.available ? '<span class="chip warn">无报价</span>'
+        : (r.stale ? '<span class="chip warn">过期</span>' : '<span class="chip ok">实时</span>');
+      // 备注/理由放名称下方：阿深那栏就是"它为什么把这只票放进自选"
+      // 人工改过的（source=manual）单独标出来，否则分不清"我加的"和"它自己加的"
+      const who = (d.owner === 'ashen' && r.source === 'manual')
+        ? '<span class="chip" style="margin-left:4px">人工</span>' : '';
+      const sub = r.note ? '<div class="td-sub">' + esc(r.note) + '</div>' : '';
+      return '<tr><td class="num">' + esc(r.code) + '</td><td>' + esc(r.name) + who + sub +
+        '</td><td class="num">' + (r.price == null ? '—' : num(r.price)) +
+        '</td><td class="num ' + cls(r.change_pct) + '">' + pct(r.change_pct) +
+        '</td><td class="num">' + amt + '</td><td class="num flat">' +
+        (r.turnover_rate == null ? '—' : num(r.turnover_rate, 2) + '%') +
+        '</td><td>' + st + '</td>' +
+        '<td class="wl-ops">' +
+          '<button class="wl-op" data-act="note" data-code="' + esc(r.code) + '"' +
+            ' data-note="' + esc(r.note || '') + '" title="改备注">✎</button>' +
+          '<button class="wl-op del" data-act="del" data-code="' + esc(r.code) + '"' +
+            ' data-name="' + esc(r.name || '') + '" title="移出自选">×</button>' +
+        '</td></tr>';
+    }).join('');
+  }).catch(e => {
+    $('#watch-body').innerHTML = '<tr><td colspan="8" style="color:var(--tx3)">不可用：' + esc(e.message) + '</td></tr>';
+  });
+  }
+
+  // ── 自选股写入（增删改）────────────────────────────────────────
+  // ⚠️ 成功后**必须** loadWatch() 重取，不能就地改 DOM：后端已经让 watch_list
+  //    缓存失效，重取拿到的是权威结果；就地改会在"名称由行情源补上""条数/顺序
+  //    变化"时和真实清单对不上，而且下次轮询一来又被打回原样。
+  let wlMsgTimer = null;
+  function wlMsg(text, ok) {
+    const el = $('#wl-msg');
+    if (!el) return;
+    el.textContent = text;
+    el.className = 'wl-msg on ' + (ok ? 'ok' : 'err');
+    clearTimeout(wlMsgTimer);
+    wlMsgTimer = setTimeout(() => { el.className = 'wl-msg'; }, 5000);
+  }
+
+  async function wlWrite(body) {
+    let j;
+    try {
+      const r = await fetch('/api/watch/watchlist', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(Object.assign({owner: wlOwner}, body))
+      });
+      j = await r.json();
+    } catch (e) {
+      wlMsg('写入失败：' + (e && e.message ? e.message : '网络错误'), false);
+      return;
+    }
+    if (j && j.ok) {
+      wlMsg((j.data && j.data.message) || '已保存', true);
+      loadWatch();
+    } else {
+      const err = (j && j.error) || {};
+      wlMsg(err.detail || err.type || '写入被拒绝', false);
+    }
+  }
+
+  function wlAdd() {
+    const el = $('#wl-code');
+    if (!el) return;
+    const code = (el.value || '').trim();
+    if (!/^\d{6}$/.test(code)) { wlMsg('请输入 6 位股票代码', false); el.focus(); return; }
+    el.value = '';
+    wlWrite({action: 'add', code});
+    el.focus();
+  }
+
+  if ($('#wl-add-btn')) {
+    $('#wl-add-btn').addEventListener('click', wlAdd);
+    $('#wl-code').addEventListener('keydown', e => { if (e.key === 'Enter') wlAdd(); });
+  }
+
+  // 行内 ✎ / ×：**事件委托**到 tbody——行是 innerHTML 整块重建的，
+  // 直接给按钮绑 listener 会在第一次重绘后全部失效（最典型的"点一次能用"）。
+  if ($('#watch-body')) {
+    $('#watch-body').addEventListener('click', e => {
+      const b = e.target.closest ? e.target.closest('.wl-op') : null;
+      if (!b) return;
+      const code = b.dataset.code || '';
+      const name = b.dataset.name || code;
+      const act = b.dataset.act;
+      if (act === 'del') {
+        if (!confirm('把 ' + name + '（' + code + '）移出「' +
+                     (OWNER_NAME[wlOwner] || '') + '」自选？')) return;
+        wlWrite({action: 'remove', code});
+      } else if (act === 'note') {
+        const cur = b.dataset.note || '';
+        const v = prompt(name + ' 的备注（留空 = 清除）：', cur);
+        // ⚠️ null = 点了取消，**不等于**清空。混一起的后果是"点取消反而把备注删了"。
+        if (v === null) return;
+        if (v === cur) return;                 // 没改就别写（后端会判"没有要修改的字段"）
+        wlWrite({action: 'update', code, note: v});
+      }
+    });
+  }
+
+  function loadIndustry() {
+  get('/api/watch/industry').then(b => {
+    if (!b.ok) throw new Error(b.error.type);
+    const d = b.data;
+    $('#ind-note').textContent = d.data_date + ' · ' + d.total + ' 行业';
+    const rows = d.top_in.concat(d.top_out.slice(0, 5));
+    const maxAbs = Math.max(...rows.map(r => Math.abs(r.net_yi || 0)), 1);
+    $('#ind-body').innerHTML = rows.map(r => {
+      const v = r.net_yi, w = Math.min(100, Math.abs(v || 0) / maxAbs * 100).toFixed(0);
+      return '<div class="bar"><b title="' + esc(r.leader) + '">' + esc(r.industry) +
+        '</b><div class="t"><i class="' + (v < 0 ? 'neg' : '') + '" style="width:' + w + '%"></i></div>' +
+        '<span class="n num ' + cls(v) + '">' + (v == null ? '—' : (v > 0 ? '+' : '') + num(v, 1) + '亿') +
+        '</span></div>';
+    }).join('');
+  }).catch(e => {
+    $('#ind-body').innerHTML = '<div style="color:var(--tx3);font-size:12px">' +
+      (e.message === 'missing' ? '行业资金快照无数据（盘后 15:30 落库）' : '不可用：' + esc(e.message)) + '</div>';
+  });
+  }
+
+  function loadUs() {
+  get('/api/watch/us').then(b => {
+    if (!b.ok) throw new Error(b.error.type);
+    const d = b.data;
+    $('#us-note').textContent = d.data_date + ' · T-' + d.days_ago + ' · ' + (d.level_text || '');
+    const maxAbs = Math.max(...d.rows.map(r => Math.abs(r.change_pct || 0)), 0.1);
+    $('#us-body').innerHTML = d.rows.map(r => {
+      const v = r.change_pct, w = Math.min(100, Math.abs(v || 0) / maxAbs * 100).toFixed(0);
+      return '<div class="bar"><b>' + esc(r.name) + '</b><div class="t"><i class="' + (v < 0 ? 'neg' : '') +
+        '" style="width:' + w + '%"></i></div><span class="n num ' + cls(v) + '">' + pct(v) + '</span></div>';
+    }).join('');
+  }).catch(e => {
+    $('#us-body').innerHTML = '<div style="color:var(--tx3);font-size:12px">不可用：' + esc(e.message) + '</div>';
+  });
+  }
+
+  function loadAlerts() {
+  get('/api/watch/alerts').then(b => {
+    if (!b.ok) throw new Error(b.error.type);
+    const d = b.data;
+    $('#alerts-note').textContent = d.date + ' · ' + d.total + ' 条';
+    if (!d.rows.length) {
+      $('#alerts').innerHTML = '<div style="color:var(--tx3);font-size:12px">' +
+        d.date + ' 无命中（交易时段每分钟检查一次）</div>';
+      return;
+    }
+    const tone = {danger: 'bad', warn: 'warn', info: ''};
+    $('#alerts').innerHTML = d.rows.map(r =>
+      '<div class="al"><span class="t num">' + esc(r.time || '--:--') + '</span><span class="b">' +
+      esc((r.name || r.code || '') + ' ' + (r.message || '')) + '</span>' +
+      '<span class="chip ' + (tone[r.level] || '') + ' tag">' + esc(r.rule || r.level || '') + '</span></div>'
+    ).join('');
+  }).catch(e => {
+    $('#alerts').innerHTML = '<div style="color:var(--tx3);font-size:12px">不可用：' + esc(e.message) + '</div>';
+  });
+  }
+
+  // ---------------------------------------------------------------- 轮询
+  // ⚠️ 之前这里只有 1s 时钟 + `location.reload()`，页头却写着「15s」——
+  //    实际数据只在**打开页面那一刻**取过一次，"15s" 是假的。
+  //    现在按服务端缓存 TTL 对齐：指数/自选 15s、异动 60s、行业 10min、外盘 30min，
+  //    并且**页面不可见时整轮暂停**（切走标签页不再空转打接口）。
+  const CADENCE = { quotes: 15, alerts: 60, industry: 600, us: 1800 };
+  let nextAt = { quotes: 0, alerts: 0, industry: 0, us: 0 };
+  let lastFetch = null;
+  let booted = false;
+
+  function tick() {
+    // ⚠️ 首轮必须跑，哪怕 `document.hidden` 为 true：
+    //    在后台标签页打开（中键/右键新标签）时 hidden 就是 true，
+    //    如果首轮也被"暂停"挡住，页面会**永远是空的**，直到用户切回来。
+    //    hidden 只该管"之后的空转"，不该管"第一次取数"。
+    if (document.hidden && booted) { nextAt = { quotes: 0, alerts: 0, industry: 0, us: 0 }; return; }
+    booted = true;
+    const now = Date.now();
+    if (!nextAt.quotes || now >= nextAt.quotes) {
+      nextAt.quotes = now + CADENCE.quotes * 1000;
+      loadIndices(); loadWatch();
+      lastFetch = now;
+    }
+    if (!nextAt.alerts || now >= nextAt.alerts) {
+      nextAt.alerts = now + CADENCE.alerts * 1000; loadAlerts();
+    }
+    if (!nextAt.industry || now >= nextAt.industry) {
+      nextAt.industry = now + CADENCE.industry * 1000; loadIndustry();
+    }
+    if (!nextAt.us || now >= nextAt.us) {
+      nextAt.us = now + CADENCE.us * 1000; loadUs();
+    }
+  }
+
+  // 倒计时（让"下一次什么时候刷"可见，而不是靠猜）
+  setInterval(() => {
+    const cd = $('#cd');
+    if (!cd) return;
+    if (document.hidden) { cd.textContent = '已暂停（标签页在后台）'; return; }
+    const left = Math.max(0, Math.ceil((nextAt.quotes - Date.now()) / 1000));
+    cd.textContent = left + 's 后刷新';
+  }, 1000);
+
+  document.addEventListener('visibilitychange', () => {
+    // 从后台切回来立刻补一轮（否则最多要等一个完整周期）
+    if (!document.hidden) { nextAt = { quotes: 0, alerts: 0, industry: 0, us: 0 }; tick(); }
+  });
+
+  // 切换自选轨：只重取这一栏（不整页 reload，也不动其它四区）
+  document.querySelectorAll('.wl-tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (wlOwner === btn.dataset.owner) return;
+      wlOwner = btn.dataset.owner;
+      document.querySelectorAll('.wl-tab').forEach(b => b.classList.toggle('on', b === btn));
+      $('#watch-body').innerHTML = '<tr><td colspan="8" style="color:var(--tx3)">加载中…</td></tr>';
+      loadWatch();
+    });
+  });
+
+  // 手动刷新：只重取行情，不再整页 reload（整页 reload 会丢滚动位置与展开状态）
+  $('#refresh').addEventListener('click', () => {
+    nextAt = { quotes: 0, alerts: 0, industry: 0, us: 0 };
+    tick();
+  });
+  tick();
+  ft.textContent = 'API · 行情 15s / 异动 60s / 行业 10min / 外盘 30min（后台标签页自动暂停）';
+})();
+</script>
+<script src="../static/js/demo.js"></script>
+</body>
+</html>

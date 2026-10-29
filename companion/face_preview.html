@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>阿深 · 脸部特写（验证用）</title>
+<!--
+  ⚠️ 这个页面渲染的是 **WhaleGirl 占位体**（`js/character.js`），
+  也就是 `assets/ashen.glb` 加载失败时才会出现的那一套。
+  线上正常跑的是 glb 模型 —— 要看那个请开 `model_preview.html`。
+  这里留着是因为占位体仍有兜底职责，改它的五官时需要一个能看清脸的镜头。
+-->
+<style>html,body{margin:0;height:100%;background:#181C24;overflow:hidden}#c{display:block}</style>
+<script type="importmap">
+  { "imports": { "three": "./vendor/three.module.js" } }
+</script>
+</head>
+<body>
+<script type="module">
+import * as THREE from 'three';
+import { WhaleGirl } from './js/character.js';
+
+// 只做一件事：把镜头怼到脸上，让"表情改了没有"肉眼可判。
+// 真实房间里脸只有 60px 高，改没改都看不清 —— 这就是为什么之前那个
+// "粉色圆饼"能一直留在页面上没人发现。
+const mood = new URLSearchParams(location.search).get('mood') || 'neutral';
+// 截图必须排除眨眼：闭眼只有 0.12s，但拍摄时刻是随机的 ⇒ 会以约 5% 的概率
+// 拍到"眼睛成一条缝"，然后误判成"眼睛做扁了"（实际遇到过两次）。
+const NOBLINK = new URLSearchParams(location.search).get('noblink') === '1';
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(2);
+renderer.setSize(420, 420);
+renderer.domElement.id = 'c';
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x181C24);
+scene.add(new THREE.AmbientLight(0xFFFFFF, 0.95));
+const sun = new THREE.DirectionalLight(0xFFF2DD, 0.85);
+sun.position.set(0.6, 1.4, 1.6);
+scene.add(sun);
+// 补一盏正面平光：房间里有台灯和窗光，眉毛/眼线在背光时会糊成一团，
+// 特写需要一个能看清轮廓的正面光。
+const fill = new THREE.DirectionalLight(0xDFF0FF, 0.35);
+fill.position.set(-0.8, 0.6, 1.2);
+scene.add(fill);
+
+const girl = new WhaleGirl(scene);
+girl.setMode('stand');
+girl.setMood(mood);
+// 露出来给测量脚本用：`__face()` 只能读、不能试值。改五官参数前先在页面里
+// 直接扫一遍（改 rotation/scale 再读世界坐标），比改源码→重拍→再看快得多，
+// 而且不会把没验证的数值写进 character.js。
+window.__girl = girl;
+
+const camera = new THREE.PerspectiveCamera(38, 1, 0.05, 20);
+// head 在 (0, 1.0, 0)，脸球心在 z=0.06、脸朝 +z。
+// 距离 1.15 时可见高度≈0.79（含头发顶到下巴）——再近就只剩两只眼睛，
+// 眉毛和嘴全出画，等于没验。
+camera.position.set(0, 1.02, 1.15);
+camera.lookAt(0, 0.99, 0.06);
+
+let t = 0;
+function loop() {
+  t += 0.016;
+  if (NOBLINK) girl._blink = 999;          // 冻在"睁眼"，让拍摄可复现
+  girl.update(0.016);
+  girl.root.position.y = 0;
+  renderer.render(scene, camera);
+  requestAnimationFrame(loop);
+}
+loop();
+
+// 给自动化断言用：不靠"看起来对不对"，直接读几何的 transform
+window.__face = () => ({
+  mood: girl.mood,
+  eyeOpen: girl._eyeOpen,
+  eyeScaleY: girl.eyes.map((e) => +e.scale.y.toFixed(3)),
+  eyeCount: girl.eyes.length,
+  browCount: girl.brows.length,
+  blushCount: girl.blushes.length,
+  blushOpacity: girl.blushes.map((b) => +b.material.opacity.toFixed(2)),
+  browZ: girl.brows.map((b) => +b.mesh.rotation.z.toFixed(3)),
+  // 眉毛的**世界坐标**两端高度差：只看 local rotation.z 判断不了对称。
+  // 弧从 +X 逆时针扫 0.62π ⇒ 两端在局部 (R,0) 与 (R·cos0.62π, R·sin0.62π)。
+  // 内侧端点 = 靠近脸中轴的**那一端**（左眉是 x 较大的、右眉是 x 较小的）。
+  // innerDy > 0 = 内侧比外侧高 = 八字眉（难过）；两侧 innerDy 应当**同号且接近**，
+  // 若一正一负，视觉上就是"单侧挑眉"，四张图并排就能看出来。
+  browEnds: girl.brows.map((b) => {
+    const m = b.mesh.matrixWorld.elements;      // 列主序
+    const R = 0.056;
+    const pt = (a) => {
+      const x = R * Math.cos(a), y = R * Math.sin(a);
+      return { x: m[0] * x + m[4] * y + m[12], y: m[1] * x + m[5] * y + m[13] };
+    };
+    const p0 = pt(0), p1 = pt(Math.PI * 0.62);
+    const inner = b.side < 0 ? (p0.x > p1.x ? p0 : p1) : (p0.x < p1.x ? p0 : p1);
+    const outer = inner === p0 ? p1 : p0;
+    return { side: b.side, innerDy: +(inner.y - outer.y).toFixed(4) };
+  }),
+  mouth: { rz: +girl.mouth.rotation.z.toFixed(3),
+           sx: +girl.mouth.scale.x.toFixed(2),
+           sy: +girl.mouth.scale.y.toFixed(2) },
+  // 脸面 z≈0.4286（球心 0.06 + 半径 0.40）：腮红必须**贴在里面**而不是浮在外面
+  blushZ: girl.blushes.map((b) => +b.position.z.toFixed(4)),
+});
+document.documentElement.dataset.ready = '1';
+</script>
+</body>
+</html>

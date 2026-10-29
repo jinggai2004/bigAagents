@@ -1,0 +1,24 @@
+# 密钥与配置不入镜像
+.env
+
+# 用户数据（运行时通过卷挂载）
+data/
+config/watchlist.json
+output/
+logs/
+temp/
+
+# 开发文件
+tests/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.git/
+.gitignore
+README.md
+*.md
+.zcode/
+
+# 本机脚本产物
+pytest.ini

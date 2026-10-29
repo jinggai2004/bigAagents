@@ -1,0 +1,42 @@
+# bigAagents 双服务部署：web(Streamlit) + scheduler(定时任务)，共享数据卷
+# 用法: docker compose up -d   →  http://localhost:8501
+
+services:
+  web:
+    build: .
+    container_name: bigaagents-web
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    environment:
+      - TZ=Asia/Shanghai
+    volumes:
+      - ./data:/app/data          # SQLite(持仓/新闻/对话/特征) + 回测记录
+      - ./config:/app/config      # 自选股 watchlist.json
+      - ./output:/app/output      # 复盘报告 / 流水线产出
+      - ./logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8501/_stcore/health"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  scheduler:
+    build: .
+    container_name: bigaagents-scheduler
+    command: ["python", "scripts/run_scheduler.py"]
+    env_file:
+      - .env
+    environment:
+      - TZ=Asia/Shanghai
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config
+      - ./output:/app/output
+      - ./logs:/app/logs
+    restart: unless-stopped
+    depends_on:
+      - web

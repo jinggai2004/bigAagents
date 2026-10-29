@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AI 助手 · bigAagents</title>
+<link rel="stylesheet" href="../static/fonts/fonts.css">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0B0E14;--sf1:#11161F;--sf2:#161D29;--sf3:#1E2635;--line:#232C3B;--line2:#2E3949;
+--tx:#E8ECF2;--tx2:#8B94A7;--tx3:#556074;--cy:#2DD4BF;--bl:#4C9AFF;--am:#F0B429;--rd:#F0483E;--gn:#1FBF75;
+--mono:'JetBrains Mono',ui-monospace,'Cascadia Mono',Consolas,monospace;--dsp:'Space Grotesk','PingFang SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif;--sans:'PingFang SC','Microsoft YaHei','Noto Sans CJK SC','Source Han Sans SC',sans-serif}
+body{background:var(--bg);color:var(--tx);font-family:var(--sans);font-size:13px;line-height:1.6;min-height:100vh}
+body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
+background:linear-gradient(rgba(45,212,191,.022) 1px,transparent 1px),linear-gradient(90deg,rgba(45,212,191,.022) 1px,transparent 1px);background-size:48px 48px}
+.app{display:grid;grid-template-columns:204px 1fr;min-height:100vh;position:relative;z-index:1}
+aside{background:var(--sf1);border-right:1px solid var(--line);padding:16px 10px;display:flex;flex-direction:column;gap:2px;position:sticky;top:0;height:100vh}
+.brand{display:flex;align-items:center;gap:9px;padding:2px 8px 16px}
+.brand i{width:22px;height:22px;border:1.5px solid var(--cy);border-radius:5px;display:grid;place-items:center;color:var(--cy);font-style:normal;font-family:var(--dsp);font-weight:700;font-size:12px;box-shadow:0 0 12px rgba(45,212,191,.25)}
+.brand b{font-family:var(--dsp);font-size:14px;letter-spacing:.01em;font-weight:500;display:block;line-height:1.2}
+.brand span{font-size:9px;color:var(--tx3);font-family:var(--mono);letter-spacing:.14em}
+.nav a{display:flex;align-items:center;gap:10px;padding:7px 10px;color:var(--tx2);text-decoration:none;border-left:2px solid transparent;border-radius:0 4px 4px 0;font-size:13px;transition:color .15s,background .15s}
+.nav a:hover{color:var(--tx);background:var(--sf2)}
+.nav a.on{color:var(--cy);border-left-color:var(--cy);background:linear-gradient(90deg,rgba(45,212,191,.09),transparent)}
+.nav svg{width:15px;height:15px;flex:none}
+.nav .ft{margin-top:auto;font-size:10px;color:var(--tx3);font-family:var(--mono);padding:8px;letter-spacing:.06em}
+main{display:flex;flex-direction:column;min-width:0}
+.top{height:46px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px;padding:0 20px;background:rgba(17,22,31,.88);position:sticky;top:0;z-index:5;backdrop-filter:blur(8px)}
+.top h1{font-size:14px;font-weight:500;font-family:var(--dsp)}
+/* 会话历史收起按钮：常驻在标题左侧。收起后它仍在（否则没有入口再展开）。 */
+.side-toggle{width:26px;height:26px;flex:none;display:grid;place-items:center;cursor:pointer;
+border:1px solid var(--line2);border-radius:5px;background:var(--sf2);color:var(--tx2);padding:0;
+transition:color .15s,border-color .15s,background .15s}
+.side-toggle svg{width:13px;height:13px}
+.side-toggle:hover{border-color:var(--cy);color:var(--cy)}
+.side-toggle.off{color:var(--cy);border-color:rgba(45,212,191,.45);background:rgba(45,212,191,.08)}
+.top .sp{flex:1}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:2px 9px;border:1px solid var(--line2);border-radius:99px;font-size:11px;color:var(--tx2);font-family:var(--mono)}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--cy);box-shadow:0 0 6px var(--cy)}
+/* 三列宽度用变量收口：收侧栏 / 放大阿深区都只改这里，不必各处同步。
+   --room-w 从固定 300px 改成 clamp：宽屏给到 460px（房间才看得清书桌和书架），
+   窄屏自动退到 340px，而不是一刀切隐藏。 */
+/* ⚠️ overflow:hidden 是**兜底**，不是主修：主修是下面 .chat/.thread 的 min-height:0。
+   没有它的时候，对话一长整套布局会被顶开（见 .thread 注释），这一层保证即使将来
+   某个子块又忘了收缩，也只会被裁掉，而不会把视口撑出页面级滚动条。 */
+.wrap{padding:0;display:grid;--side-w:236px;--room-w:clamp(360px,36%,520px);
+grid-template-columns:var(--side-w) 1fr var(--room-w);gap:0;height:calc(100vh - 46px);
+overflow:hidden;transition:grid-template-columns .18s ease}
+/* 收起会话历史：宽度归零 + 内容裁掉。**不做 display:none**——
+   grid 列宽要留 0 才能让过渡动起来，否则会先跳一下再消失。 */
+.wrap.side-off{--side-w:0px}
+.wrap.side-off .side{padding:0;border-right:0;overflow:hidden;opacity:0;pointer-events:none}
+.side{border-right:1px solid var(--line);padding:14px;overflow-y:auto;display:flex;flex-direction:column;
+min-width:0;min-height:0;transition:opacity .18s ease}
+.side h3{font-size:11px;color:var(--tx3);font-family:var(--mono);letter-spacing:.06em;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center}
+.side h3 button{background:none;border:1px solid var(--line2);border-radius:4px;color:var(--tx2);font-family:var(--mono);font-size:11px;padding:1px 7px;cursor:pointer}
+.side h3 button:hover{border-color:var(--cy);color:var(--cy)}
+.sess{padding:9px 10px;border:1px solid var(--line);border-radius:5px;margin-bottom:8px;background:var(--sf2);cursor:pointer;position:relative}
+.sess:hover{border-color:var(--line2)}
+.sess.on{border-color:rgba(45,212,191,.4);background:rgba(45,212,191,.05)}
+.sess .t{font-size:12px;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:16px}
+.sess .m{font-size:10px;color:var(--tx3);font-family:var(--mono)}
+.sess .x{position:absolute;right:6px;top:7px;color:var(--tx3);font-size:13px;line-height:1;padding:2px 4px;border-radius:3px;display:none}
+.sess:hover .x{display:block}
+.sess .x:hover{color:var(--rd);background:rgba(240,72,62,.1)}
+.side .ft{margin-top:auto;font-size:10px;color:var(--tx3);font-family:var(--mono);padding-top:10px;letter-spacing:.04em}
+/* 右侧「阿深房间」：整列 iframe，复用 companion/embed.html（房间 + 人物都在里面）。
+   为什么不塞侧栏小方块：房间是场景（书桌/书架/地毯/画像），压到 200px 宽就只剩一个人头。
+   ⚠️ min-height:0 同样不能省：grid 子项默认 min-height:auto，被内容撑开时它会
+      跟着行高一起变高，iframe 随之变高 ⇒ 3D 画布按"又窄又高"的比例重绘，
+      人物被纵向拉长（2026-10-28 实测：444×505 变成 444×6490）。 */
+.room-pane{border-left:1px solid var(--line);min-width:0;min-height:0;overflow:hidden;background:#181C24}
+.room-pane iframe{display:block;width:100%;height:100%;border:0}
+/* 窄屏先压缩三列，真放不下（<1024）才收起房间 —— 别一上来就 display:none，
+   否则小窗口用户会以为"这个功能没有"。 */
+/* 窄屏：先压侧栏与房间，真不够宽（<1180）才收起房间。
+   ⚠️ 断点原来是 1024 —— 1280×900 的笔记本上三列会被压到房间只剩 240px，
+      整个房间糊成一个人头。抬到 1180 是为了让常见笔记本分辨率下房间仍然完整。 */
+@media (max-width:1400px){.wrap{--side-w:210px;--room-w:clamp(330px,32%,440px)}}
+@media (max-width:1180px){.room-pane{display:none}.wrap{grid-template-columns:var(--side-w) 1fr}}
+/* ⚠️ 中间对话区必须自己滚：`.chat` 与 `.thread` 都得有 `min-height:0`。
+   flex/grid 子项的默认 `min-height:auto` 等于"内容多高我就多高"，于是
+   `flex:1` 根本压不住 `.thread` —— 它会把 `.chat`、grid 行高一路顶到 6531px，
+   右侧房间（`align-self:stretch`）跟着变成 6531px 高，iframe 里 3D 画布按
+   444×6490 重绘，人物被纵向拉成长条。只加 `.thread{overflow-y:auto}` 不生效，
+   因为溢出的是**父级高度**，不是它自己的滚动机箱。 */
+.chat{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden}
+/* 中间对话区限宽居中：三列拉满时一行能到 100 字，读起来极累，而且把宽度让给房间。
+   --mid-max 是**内容**宽度上限（不含 padding），小窗口下自然铺满。 */
+.thread{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:16px;
+--mid-max:820px;padding:20px max(18px,calc((100% - var(--mid-max)) / 2))}
+.msg{max-width:78%;display:flex;flex-direction:column;gap:6px}
+.msg .who{font-size:10px;color:var(--tx3);font-family:var(--mono);letter-spacing:.06em}
+.msg .bd{padding:10px 13px;border-radius:8px;font-size:13px;line-height:1.7;overflow-wrap:anywhere}
+.msg .bd p{margin:5px 0}
+.msg .bd p:first-child{margin-top:0}
+.msg .bd p:last-child{margin-bottom:0}
+.msg .bd strong{color:var(--tx);font-weight:500}
+.msg .bd code{font-family:var(--mono);font-size:11px;background:var(--sf3);padding:1px 5px;border-radius:3px;color:var(--cy)}
+.msg .bd ul,.msg .bd ol{margin:5px 0 5px 18px}
+.msg .bd h1,.msg .bd h2,.msg .bd h3,.msg .bd h4{font-size:13px;font-weight:500;margin:10px 0 4px;color:var(--tx)}
+.msg .bd blockquote{margin:6px 0;padding:4px 10px;border-left:2px solid var(--line2);background:var(--sf2);color:var(--tx3);font-size:12px}
+.msg .bd a{color:var(--cy)}
+.msg.user{align-self:flex-end;align-items:flex-end}
+.msg.user .bd{background:var(--sf3);border:1px solid var(--line2);border-bottom-right-radius:2px;white-space:pre-wrap}
+.msg.bot .bd{background:var(--sf1);border:1px solid var(--line);border-bottom-left-radius:2px}
+.tools{display:flex;flex-wrap:wrap;gap:6px}
+.tool{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:3px;font-size:10px;font-family:var(--mono);color:var(--cy);border:1px solid rgba(45,212,191,.3);background:rgba(45,212,191,.05)}
+.tool.run{color:var(--am);border-color:rgba(240,180,41,.3);background:rgba(240,180,41,.05)}
+.tool.x{color:var(--rd);border-color:rgba(240,72,62,.3);background:rgba(240,72,62,.05)}
+table{width:100%;border-collapse:collapse;margin-top:8px}
+th{font-size:10px;color:var(--tx3);font-weight:400;text-align:left;padding:5px 8px;border-bottom:1px solid var(--line);font-family:var(--mono)}
+td{padding:5px 8px;border-bottom:1px solid rgba(35,44,59,.55);font-size:12px;white-space:nowrap}
+tr:last-child td{border-bottom:none}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.up{color:var(--rd)}.dn{color:var(--gn)}.flat{color:var(--tx2)}
+.chip{display:inline-flex;align-items:center;gap:4px;padding:0 7px;border-radius:3px;font-size:11px;border:1px solid var(--line2);color:var(--tx2);font-family:var(--mono);line-height:18px}
+.chip.warn{color:var(--am);border-color:rgba(240,180,41,.35);background:rgba(240,180,41,.06)}
+.chip.bad{color:var(--rd);border-color:rgba(240,72,62,.35);background:rgba(240,72,62,.06)}
+/* 输入区与对话区**同宽同边**（都吃 --mid-max），否则输入框在宽屏下会横贯整屏、
+   和上面对话的左右边线错开，看起来像两块不相干的区域。 */
+.input{border-top:1px solid var(--line);background:var(--sf1);
+--mid-max:820px;padding:12px max(18px,calc((100% - var(--mid-max)) / 2))}
+.input .row{display:flex;gap:10px}
+.input input{flex:1;background:var(--sf2);border:1px solid var(--line2);border-radius:6px;color:var(--tx);font-size:13px;padding:10px 14px;font-family:var(--sans);outline:none}
+.input input:focus{border-color:var(--cy)}
+.input input:disabled{opacity:.6}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:8px 18px;border-radius:6px;border:1px solid var(--line2);background:var(--sf2);color:var(--tx);font-size:12px;cursor:pointer;font-family:var(--sans)}
+.btn.p{background:var(--cy);border-color:var(--cy);color:#04201C;font-weight:500}
+.btn.p:hover{background:#37e7d2}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.sug{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+.sug button{border:1px dashed var(--line2);background:none;color:var(--tx2);font-size:11px;padding:4px 11px;border-radius:99px;cursor:pointer;font-family:var(--sans)}
+.sug button:hover{border-color:var(--cy);color:var(--cy);border-style:solid}
+.persona{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--tx3);font-family:var(--mono);margin-bottom:10px}
+select{background:var(--sf2);border:1px solid var(--line2);border-radius:4px;color:var(--tx2);font-size:11px;padding:3px 8px;font-family:var(--mono);outline:none}
+.empty{padding:16px 10px;color:var(--tx3);font-size:12px;font-family:var(--mono);text-align:center}
+.mini{font-size:10px;color:var(--tx3);font-family:var(--mono);margin-top:6px}
+.cv{display:block;width:100%;height:120px;margin-top:8px}
+a:focus-visible,button:focus-visible,input:focus-visible{outline:2px solid var(--cy);outline-offset:1px}
+@keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.r{animation:rise .45s cubic-bezier(.16,1,.3,1) both}
+@keyframes pulse{0%,100%{opacity:.35}50%{opacity:1}}
+.thinking .d{display:inline-block;animation:pulse 1.1s ease-in-out infinite}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+@media (max-width:960px){.app{grid-template-columns:1fr}aside{display:none}.side{display:none}.wrap{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="app">
+<aside>
+  <div class="brand"><i>B</i><div><b>bigAagents</b><span>A-SHARE · MULTI-AGENT</span></div></div>
+  <nav class="nav">
+    <a href="index.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1.5" y="1.5" width="5.5" height="5.5" rx="1"/><rect x="9" y="1.5" width="5.5" height="5.5" rx="1"/><rect x="1.5" y="9" width="5.5" height="5.5" rx="1"/><rect x="9" y="9" width="5.5" height="5.5" rx="1"/></svg>仪表盘</a>
+    <a href="screening.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3h12l-4.5 4.5v5L6.5 15.5v-7L2 3z"/></svg>选股</a>
+    <a href="analysis.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="1.8"/><path d="M8 1v2.5M8 12.5V15M1 8h2.5M12.5 8H15"/></svg>深度分析</a>
+    <a href="watch.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1.5 13.5l4-5 3 2 5.5-7.5"/><path d="M11 3h3v3"/></svg>看盘</a>
+    <a href="intel.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="12.5" r="1.5"/><path d="M4.8 9.2a4.4 4.4 0 0 1 6.4 0M2.2 6.2a8.2 8.2 0 0 1 11.6 0"/></svg>情报</a>
+    <a href="desk.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1.5L14.5 5 8 8.5 1.5 5 8 1.5z"/><path d="M1.5 9l6.5 3.5L14.5 9"/></svg>交易台</a>
+    <a href="review.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 1.5h7l3 3v10H3z"/><path d="M10 1.5v3h3"/><path d="M5.5 8h5M5.5 10.5h5"/></svg>每日复盘</a>
+    <a href="research.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 1.5h4M7 1.5v4L3 13h10L9 5.5v-4"/></svg>研究</a>
+    <a href="chat.html" class="on"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 2.5h12v8H8l-3.5 3v-3H2z"/></svg>助手</a>
+    <a href="system.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 4h12M2 8h12M2 12h12"/><circle cx="5" cy="4" r="1.8"/><circle cx="11" cy="8" r="1.8"/><circle cx="7" cy="12" r="1.8"/></svg>系统</a>
+  </nav>
+  <div class="ft">v3 · LOCAL</div>
+</aside>
+<main>
+  <header class="top">
+    <button class="side-toggle" id="side-toggle" title="收起会话历史" aria-expanded="true">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12"/></svg>
+    </button>
+    <h1>助手</h1>
+    <span class="sp"></span>
+    <span class="pill" id="top-state"><span class="dot"></span>空闲</span>
+    <span class="pill num" id="top-tokens">— tokens</span>
+  </header>
+  <div class="wrap">
+    <div class="side">
+      <h3><span>会话历史</span><button id="btn-new" title="新建会话">＋</button></h3>
+      <div id="sess-list"><div class="empty">读取中…</div></div>
+      <div class="ft" id="side-ft">—</div>
+    </div>
+    <div class="chat">
+      <div class="thread" id="thread">
+        <div class="empty">输入问题开始对话</div>
+      </div>
+      <div class="input">
+        <div class="persona">分析视角 <select id="persona"><option value="">默认</option></select></div>
+        <div class="sug">
+          <button>自选股行情怎么样？</button>
+          <button>帮我看看宁德时代的技术面</button>
+          <button>今天大盘像历史上哪几天？</button>
+          <button>我的持仓怎么样？</button>
+        </div>
+        <div class="row">
+          <input id="q" placeholder="问行情 · 资金面 · 持仓 · 选股 · 回测 · 相似历史日…" autocomplete="off">
+          <button class="btn p" id="send">发送</button>
+        </div>
+        <div class="mini" id="ft">连接 API 中…</div>
+      </div>
+    </div>
+    <!-- 阿深房间：右列整块。房间/人物/状态条都在 iframe 里（companion/embed.html），
+         主站只负责给一块地方，不掺和 3D 逻辑。 -->
+    <div class="room-pane">
+      <iframe src="/companion/embed.html?mode=stand" title="阿深 · 房间" loading="lazy"></iframe>
+    </div>
+  </div>
+</main>
+</div>
+<script src="../static/js/md.js"></script>
+<script src="../static/js/demo.js"></script>
+<script>
+(() => {
+  const $ = (s) => document.querySelector(s);
+  const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const get = (u) => fetch(u, {cache: 'no-store'}).then(r => r.json());
+  const ERR = {missing:'无数据', empty:'解析失败', invalid:'参数非法', offline:'离线', stale:'数据滞后', auth:'鉴权失败', proxy:'网络不可达', timeout:'超时', upstream:'上游错误'};
+  const errText = (e) => (ERR[e && e.type] || (e && (e.message || e.type)) || '不可用');
+
+  const S = { session: '', persona: '', personas: [], busy: false, ws: null, tokens: 0 };
+
+  // ---------------------------------------------------------------- 工具名
+  // 后端发的是函数名（tool_stock_technicals），界面上要人能读的中文。
+  // 未知工具**如实显示原名**，不猜（猜错会让人以为调了别的东西）。
+  const TOOL_LABEL = {
+    tool_stock_quote:'实时行情', tool_stock_technicals:'技术面', tool_kline:'K 线',
+    tool_fund_flow:'资金面', tool_portfolio:'持仓', tool_holdings:'持仓',
+    tool_screen:'选股', tool_backtest:'回测', tool_similar_days:'相似历史日',
+    tool_news:'新闻', tool_sentiment:'情绪', tool_analysis_report:'分析报告',
+    tool_market_signal:'市场环境', tool_sector_flow:'行业资金', tool_watchlist:'自选股',
+    tool_financials:'财报', tool_valuation:'估值', tool_index:'指数',
+  };
+  const toolName = (n) => TOOL_LABEL[n] || n;
+
+  // ---------------------------------------------------------------- 会话列表
+  function renderSessions(list) {
+    const box = $('#sess-list');
+    if (!list.length) { box.innerHTML = '<div class="empty">暂无会话</div>'; return; }
+    box.innerHTML = list.map(s =>
+      '<div class="sess' + (s.session_id === S.session ? ' on' : '') + '" data-id="' + esc(s.session_id) + '">' +
+      '<span class="x" title="删除">×</span>' +
+      '<div class="t">' + esc(s.label || '新对话') + '</div>' +
+      '<div class="m">' + esc((s.updated_at || '').slice(5, 16)) +
+      ' · ' + (s.messages || 0) + ' 条</div></div>').join('');
+    box.querySelectorAll('.sess').forEach(el => {
+      el.addEventListener('click', (ev) => {
+        if (ev.target.classList.contains('x')) { delSession(el.dataset.id); return; }
+        openSession(el.dataset.id);
+      });
+    });
+    $('#side-ft').textContent = list.length + ' 个会话';
+  }
+
+  function loadSessions() {
+    return get('/api/chat/sessions?limit=40').then(z => {
+      if (!z.ok) { $('#sess-list').innerHTML = '<div class="empty">' + errText(z.error) + '</div>'; return; }
+      renderSessions(z.data.sessions);
+    });
+  }
+
+  function delSession(id) {
+    fetch('/api/chat/sessions/' + encodeURIComponent(id), {method: 'DELETE'})
+      .then(r => r.json()).then(() => {
+        if (S.session === id) { S.session = ''; clearThread(); }
+        loadSessions();
+      });
+  }
+
+  // ---------------------------------------------------------------- 消息
+  function clearThread() {
+    $('#thread').innerHTML = '<div class="empty">输入问题开始对话</div>';
+  }
+
+  function addMsg(role, html) {
+    const empty = $('#thread').querySelector('.empty');
+    if (empty) empty.remove();
+    const el = document.createElement('div');
+    el.className = 'msg ' + role + ' r';
+    el.innerHTML = '<span class="who">' + (role === 'user' ? 'YOU' : 'ASSISTANT') + '</span>' +
+      (role === 'bot' ? '<div class="tools"></div>' : '') +
+      '<div class="bd">' + html + '</div>';
+    $('#thread').appendChild(el);
+    $('#thread').scrollTop = $('#thread').scrollHeight;
+    return el;
+  }
+
+  function openSession(id) {
+    if (S.busy) return;
+    S.session = id;
+    document.querySelectorAll('.sess').forEach(el =>
+      el.classList.toggle('on', el.dataset.id === id));
+    get('/api/chat/sessions/' + encodeURIComponent(id)).then(z => {
+      if (!z.ok) {
+        $('#thread').innerHTML = '<div class="empty">' + errText(z.error) + '</div>';
+        return;
+      }
+      const msgs = z.data.messages || [];
+      if (!msgs.length) { clearThread(); return; }
+      $('#thread').innerHTML = '';
+      msgs.forEach(m => addMsg(m.role === 'assistant' ? 'bot' : 'user',
+        m.role === 'assistant' ? bigaMd(m.content) : esc(m.content)));
+      if (z.data.persona) { S.persona = z.data.persona; $('#persona').value = z.data.persona; }
+      $('#thread').scrollTop = $('#thread').scrollHeight;
+    });
+  }
+
+  // ---------------------------------------------------------------- 图表
+  function drawKline(box, c) {
+    const w = 520, h = 120, pad = 4;
+    const ys = (c.closes || []).map(Number).filter(v => isFinite(v));
+    if (ys.length < 2) return;
+    const lo = Math.min.apply(null, ys), hi = Math.max.apply(null, ys), span = (hi - lo) || 1;
+    const pts = ys.map((v, i) =>
+      (pad + i * (w - 2 * pad) / (ys.length - 1)).toFixed(1) + ',' +
+      (h - pad - (v - lo) / span * (h - 2 * pad)).toFixed(1)).join(' ');
+    const up = ys[ys.length - 1] >= ys[0];
+    box.insertAdjacentHTML('beforeend',
+      '<svg class="cv" viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none">' +
+      '<polyline points="' + pts + '" fill="none" stroke="' + (up ? 'var(--rd)' : 'var(--gn)') +
+      '" stroke-width="1.5" vector-effect="non-scaling-stroke"/></svg>' +
+      '<div class="mini">' + esc(c.title || '') + ' · ' + ys.length + ' 个交易日 · ' +
+      lo.toFixed(2) + ' ~ ' + hi.toFixed(2) + '</div>');
+  }
+
+  function drawFund5(box, c) {
+    const b = c.breakdown || {};
+    const keys = Object.keys(b);
+    if (!keys.length) return;
+    const rows = keys.map(k => {
+      const v = b[k];
+      const score = (v && typeof v === 'object') ? (v.score != null ? v.score : v['得分']) : v;
+      return '<tr><td>' + esc(k) + '</td><td class="num">' +
+        (score == null ? '—' : esc(String(score))) + '</td></tr>';
+    }).join('');
+    box.insertAdjacentHTML('beforeend',
+      '<table><thead><tr><th>' + esc(c.title || '五维评分') + '</th><th>得分</th></tr></thead>' +
+      '<tbody>' + rows + '</tbody></table>');
+  }
+
+  // ---------------------------------------------------------------- 发送
+  function setBusy(on) {
+    S.busy = on;
+    $('#send').disabled = on;
+    $('#q').disabled = on;
+    $('#top-state').innerHTML = on
+      ? '<span class="dot" style="background:var(--am);box-shadow:0 0 6px var(--am)"></span>处理中'
+      : '<span class="dot"></span>空闲';
+  }
+
+  function send() {
+    const q = $('#q').value.trim();
+    if (!q || S.busy) return;
+    $('#q').value = '';
+    addMsg('user', esc(q));
+    const bot = addMsg('bot', '');
+    const toolsBox = bot.querySelector('.tools');
+    const body = bot.querySelector('.bd');
+    body.innerHTML = '<div class="thinking" style="color:var(--tx3);font-size:12px">连接中…</div>';
+
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    const ws = new WebSocket(proto + '://' + location.host + '/api/chat/stream');
+    S.ws = ws;
+    let answerShown = false;
+
+    ws.onopen = () => {
+      setBusy(true);
+      ws.send(JSON.stringify({
+        message: q, session_id: S.session, persona: S.persona || null,
+      }));
+    };
+
+    ws.onmessage = (ev) => {
+      let d;
+      try { d = JSON.parse(ev.data); } catch (e) { return; }
+      if (d.type === 'session') {
+        S.session = d.session_id;
+        body.innerHTML = '<div class="thinking" style="color:var(--tx3);font-size:12px">思考中…</div>';
+      } else if (d.type === 'tool_start') {
+        const chip = document.createElement('span');
+        chip.className = 'tool run';
+        chip.textContent = toolName(d.tool) + ' …';
+        chip.dataset.tool = d.tool;
+        toolsBox.appendChild(chip);
+      } else if (d.type === 'tool_end') {
+        const chip = toolsBox.querySelector('[data-tool="' + d.tool + '"]:not(.done)');
+        if (chip) {
+          chip.className = 'tool done';
+          chip.textContent = toolName(d.tool) + ' ✓';
+          if (d.summary) chip.title = d.summary;
+        } else {
+          toolsBox.insertAdjacentHTML('beforeend',
+            '<span class="tool done" title="' + esc(d.summary || '') + '">' +
+            toolName(d.tool) + ' ✓</span>');
+        }
+      } else if (d.type === 'chart') {
+        try {
+          if (d.chart.kind === 'kline') drawKline(body, d.chart);
+          else if (d.chart.kind === 'fund5') drawFund5(body, d.chart);
+        } catch (e) { /* 图表是增强项，画不出来不影响回答 */ }
+      } else if (d.type === 'answer') {
+        answerShown = true;
+        body.innerHTML = bigaMd(d.text);
+        $('#thread').scrollTop = $('#thread').scrollHeight;
+      } else if (d.type === 'error') {
+        body.innerHTML = '<span class="chip bad">' + esc(errText(d.error)) + '</span>';
+        toolsBox.insertAdjacentHTML('beforeend', '<span class="tool x">错误</span>');
+      } else if (d.type === 'done') {
+        const u = d.usage || {};
+        S.tokens += (u.prompt || 0) + (u.completion || 0);
+        $('#top-tokens').textContent = S.tokens.toLocaleString('en-US') + ' tokens';
+        if (!answerShown && !body.textContent.trim()) {
+          body.innerHTML = '<span class="chip warn">未返回内容</span>';
+        }
+        loadSessions();
+      }
+    };
+
+    ws.onerror = () => {
+      body.innerHTML = '<span class="chip bad">连接失败</span>';
+    };
+
+    ws.onclose = () => {
+      setBusy(false);
+      S.ws = null;
+    };
+  }
+
+  // ---------------------------------------------------------------- 启动
+  $('#send').addEventListener('click', send);
+  $('#q').addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
+  $('#btn-new').addEventListener('click', () => {
+    if (S.busy) return;
+    S.session = '';
+    clearThread();
+    document.querySelectorAll('.sess').forEach(el => el.classList.remove('on'));
+  });
+  $('#persona').addEventListener('change', (e) => { S.persona = e.target.value; });
+  document.querySelectorAll('.sug button').forEach(b =>
+    b.addEventListener('click', () => { $('#q').value = b.textContent; $('#q').focus(); }));
+
+  Promise.all([get('/api/meta'), get('/api/chat/personas')]).then(([meta, per]) => {
+    if (per.ok) {
+      const box = $('#persona');
+      box.innerHTML = '<option value="">默认</option>' +
+        per.data.personas.filter(p => p !== '综合')
+          .map(p => '<option value="' + esc(p) + '">' + esc(p) + '</option>').join('');
+    }
+    if (meta.ok) {
+      $('#ft').textContent = 'API ' + meta.data.version + ' · 数据目录 ' + meta.data.data_root;
+    }
+    return loadSessions();
+  }).then(() => {
+    const sid = new URLSearchParams(location.search).get('session');
+    if (sid) openSession(sid);
+  }).catch(() => {
+    $('#ft').textContent = 'API 不可达';
+  });
+
+  // ── 阿深房间 → 对话：快捷指令 ──────────────────────────────────
+  // iframe 只负责"用户点了什么"，真正的发送必须走这里：会话 id、工具循环、
+  // 流式渲染全在本页，iframe 自己 fetch 会造出一条两边对不上账的孤立消息。
+  window.addEventListener('message', (e) => {
+    const d = e.data || {};
+    if (d.type !== 'ashen-ask' || !d.q) return;
+    const input = document.getElementById('q');
+    const send = document.getElementById('send');
+    if (!input) return;
+    // 立刻回执：iframe 靠它区分"发出去了"和"父页面根本没在（单独打开的）"。
+    // 不回执的话，单独打开时点按钮会**完全没有反应**，那才是真的可交互性差。
+    try { e.source.postMessage({ type: 'ashen-ask-ack' }, '*'); } catch (err) { /* 忽略 */ }
+    input.value = d.q;
+    if (send && !send.disabled) send.click();   // 正忙就只填进去，别打断当前回复
+    else input.focus();
+  });
+
+  // ── 会话历史收起／展开 ──────────────────────────────────────────
+  // 只切 `.side-off` 一个 class（列宽走 CSS 变量），不碰 innerHTML：
+  // 重建 DOM 会丢掉已渲染的会话列表和滚动位置。
+  // 记忆放 localStorage：每次进页面都手动收一遍是纯负担。
+  (function initSideToggle() {
+    const wrap = document.querySelector('.wrap');
+    const btn = $('#side-toggle');
+    if (!wrap || !btn) return;
+    const KEY = 'chat.sideCollapsed';
+    const apply = (off) => {
+      wrap.classList.toggle('side-off', off);
+      btn.classList.toggle('off', off);
+      btn.title = off ? '展开会话历史' : '收起会话历史';
+      btn.setAttribute('aria-expanded', String(!off));
+    };
+    let off = false;
+    try { off = localStorage.getItem(KEY) === '1'; } catch (e) { /* 隐私模式 */ }
+    apply(off);
+    btn.addEventListener('click', () => {
+      off = !off;
+      apply(off);
+      try { localStorage.setItem(KEY, off ? '1' : '0'); } catch (e) { /* 忽略 */ }
+    });
+  })();
+})();
+</script>
+<script>
+  // `file://` 打开时 `/companion/embed.html` 会被解析成 **盘根**（file:///companion/...），
+  // iframe 必然加载失败并留一块错误框。直接把房间列收起来，别留白。
+  if (location.protocol === 'file:') {
+    var rp = document.querySelector('.room-pane');
+    if (rp) rp.remove();
+  }
+</script>
+</body>
+</html>

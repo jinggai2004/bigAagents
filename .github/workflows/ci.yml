@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  tests:
+    # 项目按 Windows 优先开发（bat/Win32 细节），CI 也在 windows 上跑
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      BIGA_ANALYSIS_REVIEW_LLM: "0"   # 测试全程零 LLM / 零网络
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Syntax check (compileall)
+        run: python -m compileall -q core data web db llm ui utils config scripts
+
+      - name: Pure-logic test subset (no local data required)
+        run: >
+          python -m pytest
+          tests/test_backtest_validate.py
+          tests/test_style_attribution.py
+          tests/test_attribution.py
+          tests/test_pnl_attribution.py
+          tests/test_replay_walkforward.py
+          -q

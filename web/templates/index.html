@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>仪表盘 · bigAagents</title>
+<link rel="stylesheet" href="../static/fonts/fonts.css">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0B0E14;--sf1:#11161F;--sf2:#161D29;--sf3:#1E2635;--line:#232C3B;--line2:#2E3949;
+--tx:#E8ECF2;--tx2:#8B94A7;--tx3:#556074;--cy:#2DD4BF;--bl:#4C9AFF;--am:#F0B429;--rd:#F0483E;--gn:#1FBF75;
+--mono:'JetBrains Mono',ui-monospace,'Cascadia Mono',Consolas,monospace;--dsp:'Space Grotesk','PingFang SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif;--sans:'PingFang SC','Microsoft YaHei','Noto Sans CJK SC','Source Han Sans SC',sans-serif}
+body{background:var(--bg);color:var(--tx);font-family:var(--sans);font-size:13px;line-height:1.6;min-height:100vh}
+body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
+background:linear-gradient(rgba(45,212,191,.022) 1px,transparent 1px),linear-gradient(90deg,rgba(45,212,191,.022) 1px,transparent 1px);background-size:48px 48px}
+.app{display:grid;grid-template-columns:204px 1fr;min-height:100vh;position:relative;z-index:1}
+aside{background:var(--sf1);border-right:1px solid var(--line);padding:16px 10px;display:flex;flex-direction:column;gap:2px;position:sticky;top:0;height:100vh}
+.brand{display:flex;align-items:center;gap:9px;padding:2px 8px 16px}
+.brand i{width:22px;height:22px;border:1.5px solid var(--cy);border-radius:5px;display:grid;place-items:center;color:var(--cy);font-style:normal;font-family:var(--dsp);font-weight:700;font-size:12px;box-shadow:0 0 12px rgba(45,212,191,.25)}
+.brand b{font-family:var(--dsp);font-size:14px;letter-spacing:.01em;font-weight:500;display:block;line-height:1.2}
+.brand span{font-size:9px;color:var(--tx3);font-family:var(--mono);letter-spacing:.14em}
+.nav a{display:flex;align-items:center;gap:10px;padding:7px 10px;color:var(--tx2);text-decoration:none;border-left:2px solid transparent;border-radius:0 4px 4px 0;font-size:13px;transition:color .15s,background .15s}
+.nav a:hover{color:var(--tx);background:var(--sf2)}
+.nav a.on{color:var(--cy);border-left-color:var(--cy);background:linear-gradient(90deg,rgba(45,212,191,.09),transparent)}
+.nav svg{width:15px;height:15px;flex:none}
+.nav .ft{margin-top:auto;font-size:10px;color:var(--tx3);font-family:var(--mono);padding:8px;letter-spacing:.06em}
+main{display:flex;flex-direction:column;min-width:0}
+.top{height:46px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px;padding:0 20px;background:rgba(17,22,31,.88);position:sticky;top:0;z-index:5;backdrop-filter:blur(8px)}
+.top h1{font-size:14px;font-weight:500;font-family:var(--dsp);letter-spacing:.01em}
+.top .sp{flex:1}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:2px 9px;border:1px solid var(--line2);border-radius:99px;font-size:11px;color:var(--tx2);font-family:var(--mono)}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--am);box-shadow:0 0 6px var(--am)}
+.dot.cy{background:var(--cy);box-shadow:0 0 6px var(--cy)}
+.wrap{padding:20px;display:flex;flex-direction:column;gap:14px;max-width:1480px;width:100%}
+.pn{background:var(--sf1);border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.ph{display:flex;align-items:center;justify-content:space-between;padding:9px 14px;border-bottom:1px solid var(--line)}
+.ph b{font-size:12px;font-weight:500;letter-spacing:.03em}
+.ph span{font-size:11px;color:var(--tx3);font-family:var(--mono)}
+.pb{padding:14px}
+.g2{display:grid;grid-template-columns:2fr 1fr;gap:14px}
+.g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px}
+.g5{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}
+table{width:100%;border-collapse:collapse}
+th{font-size:11px;color:var(--tx3);font-weight:400;text-align:left;padding:7px 12px;border-bottom:1px solid var(--line);font-family:var(--mono);letter-spacing:.03em;white-space:nowrap}
+td{padding:8px 12px;border-bottom:1px solid rgba(35,44,59,.55);font-size:13px;white-space:nowrap}
+tr:last-child td{border-bottom:none}
+tbody tr:hover{background:var(--sf2)}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.up{color:var(--rd)}.dn{color:var(--gn)}.flat{color:var(--tx2)}
+.chip{display:inline-flex;align-items:center;gap:4px;padding:0 7px;border-radius:3px;font-size:11px;border:1px solid var(--line2);color:var(--tx2);font-family:var(--mono);line-height:18px}
+.chip.ok{color:var(--cy);border-color:rgba(45,212,191,.35);background:rgba(45,212,191,.06)}
+.chip.warn{color:var(--am);border-color:rgba(240,180,41,.35);background:rgba(240,180,41,.06)}
+.chip.bad{color:var(--rd);border-color:rgba(240,72,62,.35);background:rgba(240,72,62,.06)}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:4px;border:1px solid var(--line2);background:var(--sf2);color:var(--tx);font-size:12px;cursor:pointer;font-family:var(--sans);transition:border-color .15s,color .15s;text-decoration:none}
+.btn:hover{border-color:var(--cy);color:var(--cy)}
+.btn.p{background:var(--cy);border-color:var(--cy);color:#04201C;font-weight:500}
+.btn.p:hover{background:#37e7d2;color:#04201C}
+.kpi{background:var(--sf1);border:1px solid var(--line);border-radius:6px;padding:11px 14px}
+.kpi label{display:block;margin-bottom:4px;font-size:11px;color:var(--tx3);font-family:var(--mono);letter-spacing:.04em}
+.kpi .v{font-family:var(--dsp);font-size:19px;font-weight:500;letter-spacing:-.01em}
+.kpi .d{font-size:11px;font-family:var(--mono);margin-top:2px}
+.fb{height:3px;background:var(--sf3);border-radius:2px;overflow:hidden}
+.fb i{display:block;height:100%;background:var(--cy);border-radius:2px}
+.bar{display:flex;align-items:center;gap:10px;padding:5px 0}
+.bar b{font-family:var(--mono);font-size:12px;font-weight:400;width:34px;text-align:right}
+.bar .t{flex:1;height:8px;background:var(--sf3);border-radius:2px;overflow:hidden}
+.bar .t i{display:block;height:100%;background:linear-gradient(90deg,#1c8f7f,var(--cy));border-radius:2px}
+.bar .n{font-family:var(--mono);font-size:11px;color:var(--tx3);width:52px}
+.lst{display:flex;flex-direction:column}
+.li{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid rgba(35,44,59,.55);font-size:12px}
+.li:last-child{border-bottom:none}
+.li .k{font-family:var(--mono);color:var(--tx3);font-size:11px;width:64px;flex:none}
+.li .v{flex:1;color:var(--tx)}
+.obs{display:flex;align-items:flex-start;gap:9px;padding:8px 0;border-bottom:1px solid rgba(35,44,59,.55)}
+.obs:last-child{border-bottom:none}
+.obs .m{font-family:var(--mono);font-size:11px;color:var(--tx3);flex:none;padding-top:2px}
+.obs .x{flex:1;font-size:12px}
+.mk{width:16px;height:16px;border-radius:3px;display:grid;place-items:center;font-size:10px;font-family:var(--mono);flex:none;margin-top:1px}
+.mk.y{color:var(--cy);border:1px solid rgba(45,212,191,.4)}
+.mk.n{color:var(--tx3);border:1px solid var(--line2)}
+.mk.x{color:var(--rd);border:1px solid rgba(240,72,62,.4)}
+.ft{font-size:10px;color:var(--tx3);font-family:var(--mono);letter-spacing:.05em;padding:2px 4px}
+a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--cy);outline-offset:1px}
+@keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.r{animation:rise .45s cubic-bezier(.16,1,.3,1) both}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+@media (max-width:960px){.app{grid-template-columns:1fr}aside{display:none}.g2,.g3{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="app">
+<aside>
+  <div class="brand"><i>B</i><div><b>bigAagents</b><span>A-SHARE · MULTI-AGENT</span></div></div>
+  <nav class="nav">
+    <a href="index.html" class="on"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1.5" y="1.5" width="5.5" height="5.5" rx="1"/><rect x="9" y="1.5" width="5.5" height="5.5" rx="1"/><rect x="1.5" y="9" width="5.5" height="5.5" rx="1"/><rect x="9" y="9" width="5.5" height="5.5" rx="1"/></svg>仪表盘</a>
+    <a href="screening.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3h12l-4.5 5.5v5L6.5 15.5v-7L2 3z"/></svg>选股</a>
+    <a href="analysis.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="1.8"/><path d="M8 1v2.5M8 12.5V15M1 8h2.5M12.5 8H15"/></svg>深度分析</a>
+    <a href="watch.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1.5 13.5l4-5 3 2 5.5-7.5"/><path d="M11 3h3v3"/></svg>看盘</a>
+    <a href="intel.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="12.5" r="1.5"/><path d="M4.8 9.2a4.4 4.4 0 0 1 6.4 0M2.2 6.2a8.2 8.2 0 0 1 11.6 0"/></svg>情报</a>
+    <a href="desk.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1.5L14.5 5 8 8.5 1.5 5 8 1.5z"/><path d="M1.5 9l6.5 3.5L14.5 9"/></svg>交易台</a>
+    <a href="review.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 1.5h7l3 3v10H3z"/><path d="M10 1.5v3h3"/><path d="M5.5 8h5M5.5 10.5h5"/></svg>每日复盘</a>
+    <a href="research.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 1.5h4M7 1.5v4L3 13h10L9 5.5v-4"/></svg>研究</a>
+    <a href="chat.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 2.5h12v8H8l-3.5 3v-3H2z"/></svg>助手</a>
+    <a href="system.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 4h12M2 8h12M2 12h12"/><circle cx="5" cy="4" r="1.8"/><circle cx="11" cy="8" r="1.8"/><circle cx="7" cy="12" r="1.8"/></svg>系统</a>
+  </nav>
+  <div class="ft">v3 · LOCAL</div>
+</aside>
+<main>
+  <header class="top">
+    <h1>仪表盘</h1>
+    <span class="sp"></span>
+    <span class="pill"><span class="dot"></span><span id="mkt">—</span></span>
+    <span class="pill num" id="clk">09:07:24</span>
+    <span class="pill" id="top-date">数据 —</span>
+  </header>
+  <div class="wrap">
+    <div class="g5 r">
+      <div class="kpi"><label>上证指数</label><div class="v num" id="kpi-sh">—</div><div class="d num flat" id="kpi-sh-d">—</div></div>
+      <div class="kpi"><label>深证成指</label><div class="v num" id="kpi-sz">—</div><div class="d num flat" id="kpi-sz-d">—</div></div>
+      <div class="kpi"><label>创业板指</label><div class="v num" id="kpi-cy">—</div><div class="d num flat" id="kpi-cy-d">—</div></div>
+      <div class="kpi"><label>沪市成交额</label><div class="v num" id="kpi-amt">—</div><div class="d num flat" id="kpi-amt-d">—</div></div>
+      <div class="kpi"><label>涨跌家数</label><div class="v num" id="kpi-breadth"><span class="up">—</span> <span style="color:var(--tx3);font-size:14px">/</span> <span class="dn">—</span></div><div class="d num flat" id="kpi-breadth-d">—</div></div>
+    </div>
+    <div class="g2 r" style="animation-delay:.06s">
+      <div class="pn">
+        <div class="ph"><b>今日决策</b><span id="picks-note">—</span></div>
+        <table>
+          <thead><tr><th>代码</th><th>名称</th><th>板块</th><th>评分</th><th>覆盖</th><th></th></tr></thead>
+          <tbody id="picks-body">
+            <tr><td colspan="6" style="color:var(--tx3)">读取中…</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="pn">
+        <div class="ph"><b>联赛快照</b><span id="league-note">—</span></div>
+        <div class="pb" id="league">
+          <div class="li"><span class="k">—</span><span class="v flat">读取中…</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="g2 r" style="animation-delay:.12s">
+      <div class="pn">
+        <div class="ph"><b>阿深值班</b><span id="as-note">—</span></div>
+        <div class="pb" id="as-body">
+          <div class="li"><span class="k">—</span><span class="v flat">读取中…</span></div>
+        </div>
+      </div>
+      <div class="pn">
+        <div class="ph"><b>待核对观察点</b><span id="obs-note">—</span></div>
+        <div class="pb" id="obs">
+          <div class="obs"><span class="mk n">·</span><span class="m num">—</span><span class="x flat">读取中…</span></div>
+        </div>
+      </div>
+      <div class="pn">
+        <div class="ph"><b>系统</b><span id="sys-jobs">—</span></div>
+        <div class="pb">
+          <div class="li"><span class="k">调度器</span><span class="v"><span class="chip warn" id="sys-sched">—</span></span></div>
+          <div class="li"><span class="k">心跳</span><span class="v num" id="sys-hb">—</span></div>
+          <!-- 数据源状态由 /api/dashboard 的 sources 分区填充。
+               ⚠️ 这里原来是四行写死的文字（腾讯直连 / 同花顺快照 / 新浪+同花顺 / DeepSeek），
+               只挂 data-demo，页脚自报"演示 数据源"，但字面看起来像真的 —— 而且真实的
+               降级（如"行业缺 2,943 只"）在首页一个字都看不到。 -->
+          <div id="src-list"><div class="li"><span class="k">数据源</span><span class="v flat">读取中…</span></div></div>
+          <div style="margin-top:10px"><a class="btn" href="system.html" style="width:100%;justify-content:center">系统配置</a></div>
+        </div>
+      </div>
+    </div>
+    <div class="ft" id="ft">连接 API 中…</div>
+  </div>
+</main>
+</div>
+<script>
+(() => {
+  const $ = (s) => document.querySelector(s);
+  const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const num = (v, d = 1) => (v == null || isNaN(v)) ? '—' : Number(v).toFixed(d);
+  const WD = ['周日','周一','周二','周三','周四','周五','周六'];
+
+  // 时钟与星期（纯本地时间，不做节假日推断）
+  setInterval(() => {
+    const d = new Date(), p = n => String(n).padStart(2, '0');
+    $('#clk').textContent = p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+  }, 1000);
+  $('#mkt').textContent = WD[new Date().getDay()];
+
+  const ft = $('#ft');
+  if (location.protocol === 'file:') { ft.textContent = '本地预览 · 未连接 API · 演示数据'; return; }
+
+  const get = (u) => fetch(u, {cache: 'no-store'}).then(r => r.json());
+
+  // ── 阿深值班（建仓权 L2）：**独立取数，不并进下面那条链** ──
+  // ⚠️ 下面 `get('/api/dashboard') → Promise.all(...) → .catch()` 是"全或无"：
+  //    任一接口失败就整块不跑，新加的卡会被**无关接口**的故障拖成永久"读取中…"
+  //    （desk 页的 `loadAshen()` 就踩过这个坑，同样改成独立发起）。
+  // 口径全部由后端 `/api/desk/ashen` 给：页面不重算仓位上限、不自己拼条件句。
+  const p2 = (v) => (v == null || isNaN(v)) ? '—' : (Number(v) * 100).toFixed(0) + '%';
+
+  function renderAshenHome(z) {
+    const note = $('#as-note'), body = $('#as-body');
+    if (!z || !z.ok) {
+      const e = (z && z.error) || {};
+      note.textContent = e.type === 'missing' ? '未注册' : '不可用';
+      body.innerHTML = '<div class="li"><span class="k">状态</span><span class="v flat">' +
+        esc(e.detail || ('读取失败（' + (e.type || 'proxy') + '）')) + '</span></div>';
+      return;
+    }
+    const d = z.data || {}, au = d.autonomy || {}, pa = au.params || {};
+    const ac = d.account || {}, td = d.today || {}, ct = td.counts || {};
+    const mq = ((d.budget || {}).routine) || {}, pl = d.pools || {};
+    const mine = pl.ashen || {}, boss = pl.user || {};
+    const lv = au.level || 'L0';
+
+    note.textContent = lv + ' · 单票 ≤' + p2(pa.max_position_pct) + ' · 总仓 ≤' + p2(pa.max_total_pct) +
+      ' · 最多 ' + (pa.max_stocks == null ? '—' : pa.max_stocks) + ' 只';
+    if (au.consistent === false) note.textContent += ' · 参数矛盾';
+
+    const cntTxt = (p) => p.available === false ? '读取失败' : (p.count == null ? '—' : p.count);
+    const rows = [
+      ['今日轮次', (ct.total || 0) + '/' + ((td.slots || []).length || 6) + ' 轮 · 调模型 ' + (ct.llm_called || 0) +
+        (ct.manual ? ' · 手动 ' + ct.manual : '')],
+      ['净值', ac.exists
+        ? (ac.total_value == null ? '—' : Number(ac.total_value).toLocaleString('zh-CN', {maximumFractionDigits: 0}))
+        : '未开户'],
+      ['总仓', (ac.position_pct == null ? '—' : Number(ac.position_pct).toFixed(1) + '%') +
+        ' · ' + (ac.position_count || 0) + ' 只'],
+      ['自选池', '阿深 ' + cntTxt(mine) + ' 只 · 老板 ' + cntTxt(boss) + ' 只'],
+      ['下一轮', td.next_slot ? (td.next_slot + (td.due_slot ? '（' + td.due_slot + ' 待跑）' : ''))
+        : '今日排班已结束'],
+      ['定时额度', (mq.remaining == null ? '—' : mq.remaining) + '/' + (mq.quota == null ? '—' : mq.quota)]
+    ];
+    body.innerHTML = rows.map(([k, v]) =>
+      '<div class="li"><span class="k">' + esc(k) + '</span>' +
+      '<span class="v" style="font-size:12px">' + esc(v) + '</span></div>').join('') +
+      (d.pool_hint ? '<div class="ft" style="margin-top:8px">' + esc(d.pool_hint) + '</div>' : '') +
+      '<div style="margin-top:10px"><a class="btn p" href="desk.html" ' +
+      'style="width:100%;justify-content:center">查看值班详情</a></div>';
+  }
+
+  // 独立发起：成功/失败都只影响这一张卡
+  Promise.resolve().then(() => get('/api/desk/ashen')).then(renderAshenHome)
+    .catch(() => renderAshenHome({ok: false, error: {type: 'proxy', detail: 'API 不可达'}}));
+
+  get('/api/dashboard').then(dash => Promise.all([Promise.resolve(dash), get('/api/meta')]))
+    .then(([dash, meta]) => {
+      const p = dash.data.picks, h = dash.data.health;
+      if (p.ok) {
+        const d = p.data;
+        $('#top-date').textContent = '数据 ' + (d.date || '—') + ' 收盘';
+        const stale = d.stale === true;
+        $('#picks-note').textContent = [d.date, d.mode === 'rule' ? '规则选股' : (d.mode || ''),
+          stale ? ('滞后 ' + d.lag_trading_days + ' 个交易日') : ''].filter(Boolean).join(' · ');
+        if (d.picks.length) {
+          $('#picks-body').innerHTML = d.picks.map(x => {
+            const cov = x.score_coverage == null ? '—' : (x.score_coverage * 100).toFixed(0) + '%';
+            const sc = num(x.score);
+            return '<tr><td class="num">' + esc(x['股票代码']) + '</td><td>' + esc(x['股票名称']) +
+              '</td><td>' + esc(x['板块'] || x['策略'] || '') + '</td><td class="num ' +
+              (Number(x.score) >= 80 ? 'up' : '') + '">' + sc + '</td><td class="num flat">' + cov +
+              '</td><td><a class="btn" href="analysis.html?code=' + esc(x['股票代码']) +
+              '" style="padding:2px 10px;font-size:11px">分析</a></td></tr>';
+          }).join('');
+        } else {
+          $('#picks-body').innerHTML = '<tr><td colspan="6" style="color:var(--tx3)">' +
+            esc(d.skip_reason || '当日无选股结果') + '</td></tr>';
+        }
+      } else {
+        $('#picks-note').textContent = p.error.type === 'missing' ? '无数据文件' : '不可用（' + p.error.type + '）';
+        $('#picks-body').innerHTML = '<tr><td colspan="6" style="color:var(--tx3)">' +
+          (p.error.type === 'missing' ? 'latest.json 不存在 — 盘后流水线未跑' : '读取失败：' + esc(p.error.type)) +
+          '</td></tr>';
+        $('#top-date').textContent = '数据 —';
+      }
+
+      if (h.ok) {
+        const s = h.data;
+        const chip = $('#sys-sched');
+        chip.textContent = s.running ? '运行中' : '未运行';
+        chip.className = 'chip ' + (s.running ? 'ok' : 'warn');
+        // ⚠️ 没心跳时 `jobs` 是 0，但那不是"配置了 0 个任务"，而是"读不到"。
+        //    直接显示 "0 任务" 会让人以为任务表空了（系统页同时写着 18 个）。
+        $('#sys-jobs').textContent = s.running ? (s.jobs + ' 任务') : '—';
+        $('#sys-hb').textContent = s.age_seconds == null ? '—' : Math.round(s.age_seconds) + 's 前';
+      }
+
+      // 数据源状态（真实来源，替换原来四行写死文字）
+      const src = dash.data.sources;
+      if (src && src.ok && (src.data.items || []).length) {
+        const CHIP = { ok: 'ok', warn: 'warn', bad: 'bad', unknown: '' };
+        const WORD = { ok: '正常', warn: '降级', bad: '不可用', unknown: '未知' };
+        $('#src-list').innerHTML = src.data.items.map(it =>
+          '<div class="li"><span class="k">' + esc(it.label) + '</span>' +
+          '<span class="v"><span class="chip ' + (CHIP[it.state] || '') + '" title="' +
+          esc(it.title || '') + '">' + esc(it.text) + '</span></span>' +
+          '<span class="chip" title="状态">' + (WORD[it.state] || '未知') + '</span></div>').join('');
+      } else {
+        $('#src-list').innerHTML = '<div class="li"><span class="k">数据源</span>' +
+          '<span class="v flat">' + esc((src && src.error && src.error.type) || '不可用') + '</span></div>';
+      }
+
+      const w = dash.data.watch;
+      if (w.ok && w.data) {
+        const map = {};
+        (w.data.indices || []).forEach(r => { map[r.symbol] = r; });
+        const put = (id, r) => {
+          if (!r) return;
+          const el = $('#' + id), dl = $('#' + id + '-d');
+          if (el) {
+            el.textContent = r.price == null ? '—'
+              : Number(r.price).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+          }
+          if (dl) {
+            const v = r.change_pct;
+            dl.className = 'd num ' + (v == null ? 'flat' : (v > 0 ? 'up' : (v < 0 ? 'dn' : 'flat')));
+            dl.textContent = v == null
+              ? (r.basis === 'close' ? '收盘价' : '—')
+              : ((v > 0 ? '+' : '') + v.toFixed(2) + '% ' + (v >= 0 ? '↑' : '↓'));
+          }
+        };
+        put('kpi-sh', map['sh000001']);
+        put('kpi-sz', map['sz399001']);
+        put('kpi-cy', map['sz399006']);
+        if (w.data.amount_yi != null) {
+          $('#kpi-amt').innerHTML = Number(w.data.amount_yi).toLocaleString('en-US', {maximumFractionDigits: 0}) +
+            '<span style="font-size:12px;color:var(--tx3)"> 亿</span>';
+          $('#kpi-amt-d').textContent = w.data.amount_scope + ' · 当日';
+        }
+      }
+
+      // 涨跌家数（全市场宽度）：⚠️ 必须显示分子/分母，不能只给家数
+      const bz = dash.data.breadth;
+      if (bz && bz.ok && bz.data && bz.data.available) {
+        const b = bz.data;
+        $('#kpi-breadth').innerHTML =
+          '<span class="up">' + Number(b.up).toLocaleString('en-US') + '</span>' +
+          ' <span style="color:var(--tx3);font-size:14px">/</span> ' +
+          '<span class="dn">' + Number(b.down).toLocaleString('en-US') + '</span>';
+        const bits = [];
+        bits.push('平盘 ' + b.flat);
+        if (b.up_ratio != null) bits.push('上涨 ' + (b.up_ratio * 100).toFixed(0) + '%');
+        if (b.universe) bits.push(b.covered.toLocaleString('en-US') + '/' + b.universe.toLocaleString('en-US') + ' 只');
+        if (b.degraded && b.degraded.length) bits.push('⚠ ' + b.degraded[0]);
+        const el = $('#kpi-breadth-d');
+        el.textContent = bits.join(' · ');
+        // 颜色不承载语义：这里只有 up/dn/flat 三种色（红涨绿跌），
+        // 用它们表达"降级"会误导，所以统一 flat，降级靠正文里的 ⚠ 前缀表达。
+        el.className = 'd num flat';
+        el.title = '来源 ' + (b.source || '—') + ' · ' + (b.date || '—') +
+          (b.stale ? '（滞后，最近应收盘日 ' + (b.expected_date || '—') + '）' : '');
+      } else {
+        const why = (bz && !bz.ok) ? ((bz.error && bz.error.type) || '不可用')
+          : ((bz && bz.data && bz.data.reason) || '暂无当日截面');
+        $('#kpi-breadth').innerHTML = '<span class="flat">—</span>';
+        $('#kpi-breadth-d').textContent = why;
+      }
+
+      // 联赛快照（P3 接 /api/dashboard 的 league 分区）
+      const lg = dash.data.league;
+      if (lg && lg.ok) {
+        const L = lg.data;
+        $('#league-note').textContent = (L.total ? L.rows.length + '/' + L.total : '0') + ' 人设 · 随机均值 ' +
+          (L.random_mean == null ? '—' : (L.random_mean > 0 ? '+' : '') + Number(L.random_mean).toFixed(2) + '%');
+        $('#league').innerHTML = (L.rows.length ? L.rows.map(r => {
+          const v = r.return_pct;
+          return '<div class="li"><span class="k">' + esc(r.label) + '</span>' +
+            '<span class="v num ' + (v == null ? 'flat' : (v > 0 ? 'up' : (v < 0 ? 'dn' : 'flat'))) + '">' +
+            (v == null ? '—' : (v > 0 ? '+' : '') + Number(v).toFixed(2) + '%') + '</span>' +
+            '<span class="chip' + (r.conclusive ? ' ok' : ' warn') + '">' +
+            (r.nav_days == null ? '—' : r.nav_days) + ' 日</span></div>';
+        }).join('') : '<div class="li"><span class="k">—</span><span class="v flat">无榜单</span></div>') +
+          '<div style="margin-top:10px"><a class="btn p" href="desk.html" style="width:100%;justify-content:center">进入交易台</a></div>';
+      } else {
+        $('#league-note').textContent = lg && lg.error ? lg.error.type : '不可用';
+        $('#league').innerHTML = '<div class="li"><span class="k">—</span><span class="v flat">无榜单</span></div>';
+      }
+
+      // 待核对观察点（P3 接 observations 分区）
+      const ob = dash.data.observations;
+      if (ob && ob.ok) {
+        const it = ob.data.items || [];
+        $('#obs-note').textContent = ob.data.count + ' 条待核';
+        // ⚠️ 这块原来标题写「明日观察点」，但数据是**近 3 天内已提出、还没核对结果**的观察点
+        //    （`get_unverified_observations` 明确排除当日），是"事后待核"不是"明日预测"。
+        //    标题已改成"待核对观察点"，这里再把口径写进 title，避免又被当预言看。
+        $('#obs-note').title = '近 3 天内提出、尚未核对结果的观察点（不是明日预测）';
+        $('#obs').innerHTML = it.length ? it.map(o =>
+          '<div class="obs"><span class="mk n">·</span><span class="m num">' +
+          esc(String(o.review_date || '').slice(5)) + '</span><span class="x">' +
+          esc(o.content || '') + '</span></div>').join('')
+          : '<div class="obs"><span class="mk n">·</span><span class="m num">—</span><span class="x flat">无待核观察点</span></div>';
+      } else {
+        $('#obs-note').textContent = ob && ob.error ? ob.error.type : '不可用';
+      }
+
+      const demoList = (window.bigaDemo ? bigaDemo.collect() : []);
+      ft.textContent = 'API ' + meta.data.version + ' · 数据 ' + (dash.as_of || '—') +
+        (demoList.length ? ' · 演示 ' + demoList.join(' · ') : '');
+    })
+    .catch(() => { ft.textContent = 'API 不可达 · 显示演示数据'; });
+})();
+</script>
+<script src="../static/js/demo.js"></script>
+</body>
+</html>

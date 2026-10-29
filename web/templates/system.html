@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>系统 · bigAagents</title>
+<link rel="stylesheet" href="../static/fonts/fonts.css">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0B0E14;--sf1:#11161F;--sf2:#161D29;--sf3:#1E2635;--line:#232C3B;--line2:#2E3949;
+--tx:#E8ECF2;--tx2:#8B94A7;--tx3:#556074;--cy:#2DD4BF;--bl:#4C9AFF;--am:#F0B429;--rd:#F0483E;--gn:#1FBF75;
+--mono:'JetBrains Mono',ui-monospace,'Cascadia Mono',Consolas,monospace;--dsp:'Space Grotesk','PingFang SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif;--sans:'PingFang SC','Microsoft YaHei','Noto Sans CJK SC','Source Han Sans SC',sans-serif}
+body{background:var(--bg);color:var(--tx);font-family:var(--sans);font-size:13px;line-height:1.6;min-height:100vh}
+body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
+background:linear-gradient(rgba(45,212,191,.022) 1px,transparent 1px),linear-gradient(90deg,rgba(45,212,191,.022) 1px,transparent 1px);background-size:48px 48px}
+.app{display:grid;grid-template-columns:204px 1fr;min-height:100vh;position:relative;z-index:1}
+aside{background:var(--sf1);border-right:1px solid var(--line);padding:16px 10px;display:flex;flex-direction:column;gap:2px;position:sticky;top:0;height:100vh}
+.brand{display:flex;align-items:center;gap:9px;padding:2px 8px 16px}
+.brand i{width:22px;height:22px;border:1.5px solid var(--cy);border-radius:5px;display:grid;place-items:center;color:var(--cy);font-style:normal;font-family:var(--dsp);font-weight:700;font-size:12px;box-shadow:0 0 12px rgba(45,212,191,.25)}
+.brand b{font-family:var(--dsp);font-size:14px;letter-spacing:.01em;font-weight:500;display:block;line-height:1.2}
+.brand span{font-size:9px;color:var(--tx3);font-family:var(--mono);letter-spacing:.14em}
+.nav a{display:flex;align-items:center;gap:10px;padding:7px 10px;color:var(--tx2);text-decoration:none;border-left:2px solid transparent;border-radius:0 4px 4px 0;font-size:13px;transition:color .15s,background .15s}
+.nav a:hover{color:var(--tx);background:var(--sf2)}
+.nav a.on{color:var(--cy);border-left-color:var(--cy);background:linear-gradient(90deg,rgba(45,212,191,.09),transparent)}
+.nav svg{width:15px;height:15px;flex:none}
+.nav .ft{margin-top:auto;font-size:10px;color:var(--tx3);font-family:var(--mono);padding:8px;letter-spacing:.06em}
+main{display:flex;flex-direction:column;min-width:0}
+.top{height:46px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px;padding:0 20px;background:rgba(17,22,31,.88);position:sticky;top:0;z-index:5;backdrop-filter:blur(8px)}
+.top h1{font-size:14px;font-weight:500;font-family:var(--dsp)}
+.top .sp{flex:1}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:2px 9px;border:1px solid var(--line2);border-radius:99px;font-size:11px;color:var(--tx2);font-family:var(--mono)}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--cy);box-shadow:0 0 6px var(--cy)}
+.dot.am{background:var(--am);box-shadow:0 0 6px var(--am)}
+.dot.rd{background:var(--rd);box-shadow:0 0 6px var(--rd)}
+.wrap{padding:20px;display:flex;flex-direction:column;gap:14px;max-width:1480px;width:100%}
+.pn{background:var(--sf1);border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.ph{display:flex;align-items:center;justify-content:space-between;padding:9px 14px;border-bottom:1px solid var(--line)}
+.ph b{font-size:12px;font-weight:500;letter-spacing:.03em}
+.ph span{font-size:11px;color:var(--tx3);font-family:var(--mono)}
+.pb{padding:14px}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+/* ── 模型编辑（2026-10-27 加）────────────────────────────────────
+   之前这两张表是**纯只读**：后端 `set_feature_model` / `save_registry` /
+   热加载全都在，页面却只把结果打印出来，于是"配置界面无法配置模型"。
+   现在功能表每行一个下拉（改完即写盘，mtime 热加载立刻生效），
+   厂商表每行两个动作（设默认 / 改模型清单）。 */
+.feat-sel{background:var(--sf3);border:1px solid var(--line2);border-radius:3px;color:var(--tx);
+  font-family:var(--mono);font-size:11px;padding:2px 5px;max-width:190px;outline:none;cursor:pointer}
+.feat-sel:hover{border-color:var(--line2);background:#243044}
+.feat-sel:focus{border-color:var(--cy)}
+.feat-sel.on{border-color:rgba(45,212,191,.45);color:var(--cy)}
+/* 功能表 20+ 行，不给高度上限会把「密钥与模型」这一屏撑爆，下面的成本/健康全被推走 */
+#feat-scroll{max-height:436px;overflow-y:auto}
+.mini-btn{border:1px solid var(--line2);background:transparent;border-radius:3px;color:var(--tx3);
+  font-family:var(--mono);font-size:10px;padding:1px 6px;cursor:pointer;transition:color .15s,border-color .15s}
+.mini-btn:hover{color:var(--cy);border-color:var(--cy)}
+.mini-btn + .mini-btn{margin-left:4px}
+.sys-msg{display:none;font-size:11px;font-family:var(--mono);padding:6px 12px;border-radius:4px;
+  border:1px solid var(--line2);background:var(--sf2);color:var(--tx2)}
+.sys-msg.on{display:block}
+.sys-msg.ok{color:var(--cy);border-color:rgba(45,212,191,.35);background:rgba(45,212,191,.06)}
+.sys-msg.err{color:var(--am);border-color:rgba(240,180,41,.35);background:rgba(240,180,41,.06)}
+.g4{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+table{width:100%;border-collapse:collapse}
+th{font-size:11px;color:var(--tx3);font-weight:400;text-align:left;padding:7px 12px;border-bottom:1px solid var(--line);font-family:var(--mono);letter-spacing:.03em;white-space:nowrap}
+td{padding:8px 12px;border-bottom:1px solid rgba(35,44,59,.55);font-size:13px;white-space:nowrap}
+tr:last-child td{border-bottom:none}
+tbody tr:hover{background:var(--sf2)}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.up{color:var(--rd)}.dn{color:var(--gn)}.flat{color:var(--tx2)}
+.chip{display:inline-flex;align-items:center;gap:4px;padding:0 7px;border-radius:3px;font-size:11px;border:1px solid var(--line2);color:var(--tx2);font-family:var(--mono);line-height:18px}
+.chip.ok{color:var(--cy);border-color:rgba(45,212,191,.35);background:rgba(45,212,191,.06)}
+.chip.warn{color:var(--am);border-color:rgba(240,180,41,.35);background:rgba(240,180,41,.06)}
+.chip.bad{color:var(--rd);border-color:rgba(240,72,62,.35);background:rgba(240,72,62,.06)}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:4px;border:1px solid var(--line2);background:var(--sf2);color:var(--tx);font-size:12px;cursor:pointer;font-family:var(--sans);transition:border-color .15s,color .15s;text-decoration:none}
+.btn:hover{border-color:var(--cy);color:var(--cy)}
+.kpi{background:var(--sf1);border:1px solid var(--line);border-radius:6px;padding:11px 14px}
+.kpi label{font-size:11px;color:var(--tx3);font-family:var(--mono);letter-spacing:.04em;display:block;margin-bottom:4px}
+.kpi .v{font-family:var(--dsp);font-size:19px;font-weight:500}
+.kpi .d{font-size:11px;font-family:var(--mono);margin-top:2px}
+.stage{display:flex;align-items:center;gap:9px;font-family:var(--mono);font-size:11px;color:var(--tx2);padding:7px 0;border-bottom:1px solid rgba(35,44,59,.5)}
+.stage:last-child{border-bottom:none}
+.stage .n{flex:1;color:var(--tx2)}
+.stage .v{font-family:var(--mono);font-size:11px;color:var(--tx)}
+.sect{font-size:11px;color:var(--tx3);font-family:var(--mono);letter-spacing:.1em;margin:6px 0 -4px}
+.ft{font-size:10px;color:var(--tx3);font-family:var(--mono);letter-spacing:.05em;padding:2px 4px}
+.empty{padding:16px 14px;color:var(--tx3);font-size:12px;font-family:var(--mono);text-align:center}
+.bar{height:3px;background:var(--sf3);border-radius:2px;overflow:hidden;margin-top:5px}
+.bar i{display:block;height:100%;background:var(--cy)}
+a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--cy);outline-offset:1px}
+@keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.r{animation:rise .45s cubic-bezier(.16,1,.3,1) both}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+@media (max-width:960px){.app{grid-template-columns:1fr}aside{display:none}.g2{grid-template-columns:1fr}.g4{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<div class="app">
+<aside>
+  <div class="brand"><i>B</i><div><b>bigAagents</b><span>A-SHARE · MULTI-AGENT</span></div></div>
+  <nav class="nav">
+    <a href="index.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1.5" y="1.5" width="5.5" height="5.5" rx="1"/><rect x="9" y="1.5" width="5.5" height="5.5" rx="1"/><rect x="1.5" y="9" width="5.5" height="5.5" rx="1"/><rect x="9" y="9" width="5.5" height="5.5" rx="1"/></svg>仪表盘</a>
+    <a href="screening.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3h12l-4.5 4.5v5L6.5 15.5v-7L2 3z"/></svg>选股</a>
+    <a href="analysis.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="1.8"/><path d="M8 1v2.5M8 12.5V15M1 8h2.5M12.5 8H15"/></svg>深度分析</a>
+    <a href="watch.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1.5 13.5l4-5 3 2 5.5-7.5"/><path d="M11 3h3v3"/></svg>看盘</a>
+    <a href="intel.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="12.5" r="1.5"/><path d="M4.8 9.2a4.4 4.4 0 0 1 6.4 0M2.2 6.2a8.2 8.2 0 0 1 11.6 0"/></svg>情报</a>
+    <a href="desk.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1.5L14.5 5 8 8.5 1.5 5 8 1.5z"/><path d="M1.5 9l6.5 3.5L14.5 9"/></svg>交易台</a>
+    <a href="review.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 1.5h7l3 3v10H3z"/><path d="M10 1.5v3h3"/><path d="M5.5 8h5M5.5 10.5h5"/></svg>每日复盘</a>
+    <a href="research.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 1.5h4M7 1.5v4L3 13h10L9 5.5v-4"/></svg>研究</a>
+    <a href="chat.html"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 2.5h12v8H8l-3.5 3v-3H2z"/></svg>助手</a>
+    <a href="system.html" class="on"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 4h12M2 8h12M2 12h12"/><circle cx="5" cy="4" r="1.8"/><circle cx="11" cy="8" r="1.8"/><circle cx="7" cy="12" r="1.8"/></svg>系统</a>
+  </nav>
+  <div class="ft">v3 · LOCAL</div>
+</aside>
+<main>
+  <header class="top">
+    <h1>系统</h1>
+    <span class="sp"></span>
+    <span class="pill" id="p-sched"><span class="dot"></span><span id="p-sched-t">读取中</span></span>
+    <span class="pill num" id="p-hb">—</span>
+    <button class="btn" id="btn-reload" style="padding:3px 11px;font-size:11px">刷新</button>
+  </header>
+  <div class="wrap">
+    <div class="sect r">密钥与模型</div>
+    <div class="g2 r" style="animation-delay:.05s">
+      <div class="pn">
+        <div class="ph"><b>厂商接入</b><span id="prov-note">—</span></div>
+        <table>
+          <thead><tr><th>厂商</th><th>端点</th><th>模型</th><th>状态 / 操作</th></tr></thead>
+          <tbody id="prov-body"><tr><td colspan="4" class="empty">读取中…</td></tr></tbody>
+        </table>
+      </div>
+      <div class="pn">
+        <div class="ph"><b>功能模型分配</b><span id="feat-note">改动即生效</span></div>
+        <div class="sys-msg" id="sys-msg"></div>
+        <div id="feat-scroll">
+          <table>
+            <thead><tr><th>功能</th><th>模型</th><th>调用</th></tr></thead>
+            <tbody id="feat-body"><tr><td colspan="3" class="empty">读取中…</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <div class="g4 r" style="animation-delay:.1s">
+      <div class="kpi"><label>今日 LLM 成本</label><div class="v num" id="k-spent">—</div><div class="d num flat" id="k-spent-d">—</div></div>
+      <div class="kpi"><label>今日 Tokens</label><div class="v num" id="k-tok">—</div><div class="d num flat" id="k-tok-d">—</div></div>
+      <div class="kpi"><label>日预算占用</label><div class="v num" id="k-ratio">—</div><div class="bar"><i id="k-bar" style="width:0"></i></div></div>
+      <div class="kpi"><label>工作量日均</label><div class="v num" id="k-avg">—</div><div class="d num flat" id="k-avg-d">—</div></div>
+    </div>
+    <div class="sect r">调度与健康</div>
+    <div class="g2 r" style="animation-delay:.15s">
+      <div class="pn">
+        <div class="ph"><b>定时任务</b><span id="task-note">—</span></div>
+        <table>
+          <thead><tr><th>时间</th><th>任务</th><th>今日</th></tr></thead>
+          <tbody id="task-body"><tr><td colspan="3" class="empty">读取中…</td></tr></tbody>
+        </table>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <div class="pn">
+          <div class="ph"><b>运行健康</b><span>进程与磁盘</span></div>
+          <div class="pb" id="health-body"><div class="empty">读取中…</div></div>
+        </div>
+        <div class="pn">
+          <div class="ph"><b>近 7 日成本</b><span>按用途</span></div>
+          <div class="pb" id="cost-body"><div class="empty">读取中…</div></div>
+        </div>
+      </div>
+    </div>
+    <div class="sect r">审计与留痕</div>
+    <div class="g2 r" style="animation-delay:.18s">
+      <div class="pn">
+        <div class="ph"><b>配置变更流水</b><span id="chg-note">—</span></div>
+        <table>
+          <thead><tr><th>时间</th><th>工具</th><th>动作</th><th>摘要</th><th>结果</th></tr></thead>
+          <tbody id="chg-body"><tr><td colspan="5" class="empty">读取中…</td></tr></tbody>
+        </table>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <div class="pn">
+          <div class="ph"><b>推送流水</b><span id="push-note">—</span></div>
+          <div class="pb" id="push-body"><div class="empty">读取中…</div></div>
+        </div>
+        <div class="pn">
+          <div class="ph"><b>新闻情绪标注留痕</b><span id="sent-note">—</span></div>
+          <div class="pb" id="sent-body"><div class="empty">读取中…</div></div>
+        </div>
+      </div>
+    </div>
+    <div class="ft" id="ft">连接 API 中…</div>
+  </div>
+</main>
+</div>
+<script src="../static/js/demo.js"></script>
+<script>
+(() => {
+  const $ = (s) => document.querySelector(s);
+  const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const get = (u) => fetch(u, {cache: 'no-store'}).then(r => r.json());
+  const ERR = {missing:'无数据', empty:'解析失败', invalid:'参数非法', offline:'离线', stale:'滞后', auth:'鉴权失败', proxy:'网络不可达', timeout:'超时'};
+  const errText = (e) => (ERR[e && e.type] || (e && (e.detail || e.type)) || '不可用');
+  const num = (v, d = 0) => (v == null || !isFinite(v)) ? '—'
+    : Number(v).toLocaleString('en-US', {minimumFractionDigits: d, maximumFractionDigits: d});
+  const money = (v) => (v == null || !isFinite(v)) ? '—' : '¥' + Number(v).toFixed(2);
+  const ago = (s) => {
+    if (s == null) return '—';
+    if (s < 60) return Math.round(s) + 's 前';
+    if (s < 3600) return Math.round(s / 60) + 'm 前';
+    return Math.round(s / 3600) + 'h 前';
+  };
+
+  // ---------------------------------------------------------------- 健康
+  function renderHealth(z) {
+    if (!z.ok) { $('#health-body').innerHTML = '<div class="empty">' + errText(z.error) + '</div>'; return; }
+    const d = z.data;
+    const running = !!d.running;
+    $('#p-sched').innerHTML = '<span class="dot' + (running ? '' : ' rd') + '"></span><span>' +
+      (running ? '调度器运行中' : '调度器未运行') + '</span>';
+    $('#p-hb').textContent = running
+      ? 'PID ' + (d.pid || '—') + ' · 心跳 ' + ago(d.age_seconds)
+      : (d.heartbeat_at ? '末次心跳 ' + esc(d.heartbeat_at) : '无心跳文件');
+
+    const rows = [
+      ['调度器进程', running ? '<span class="chip ok">运行中</span>' : '<span class="chip bad">未运行</span>'],
+      ['心跳', d.age_seconds == null ? '—' :
+        '<span class="chip' + (d.stale ? ' warn' : ' ok') + '">' + ago(d.age_seconds) +
+        (d.stale ? ' · 陈旧' : '') + '</span>'],
+      ['定时任务数', '<span class="v">' + num(d.jobs) + '</span>'],
+      ['离线模式', d.offline ? '<span class="chip warn">BIGA_OFFLINE</span>' : '<span class="chip ok">在线</span>'],
+      ['服务进程 PID', '<span class="v">' + num(d.pid_self) + '</span>'],
+      ['磁盘剩余', d.disk_free_gb == null ? '—' : '<span class="v">' + d.disk_free_gb + ' GB</span>'],
+      ['数据目录', '<span class="v" style="font-size:10px">' + esc(d.data_root || '—') + '</span>'],
+    ];
+    $('#health-body').innerHTML = rows.map(([k, v]) =>
+      '<div class="stage"><span class="n">' + k + '</span>' + v + '</div>').join('');
+  }
+
+  // ---------------------------------------------------------------- 任务
+  function renderTasks(z) {
+    if (!z.ok) { $('#task-body').innerHTML = '<tr><td colspan="3" class="empty">' + errText(z.error) + '</td></tr>'; return; }
+    const d = z.data;
+    $('#task-note').textContent = d.total + ' 个 · 运行 ' + d.running;
+    if (!d.jobs.length) { $('#task-body').innerHTML = '<tr><td colspan="3" class="empty">无任务定义</td></tr>'; return; }
+    $('#task-body').innerHTML = d.jobs.map(j => {
+      let cell;
+      const p = j.progress || {};
+      if (j.running) {
+        const pct = Number(p.percent || 0);
+        cell = '<span class="chip warn">运行中' + (isFinite(pct) && pct > 0 ? ' ' + pct.toFixed(0) + '%' : '') + '</span>';
+      } else if (p.status === 'done') {
+        cell = '<span class="chip ok">已完成' + (p.elapsed != null ? ' ' + p.elapsed + 's' : '') + '</span>';
+      } else if (p.status === 'error') {
+        cell = '<span class="chip bad">失败</span>';
+      } else if (p.status) {
+        cell = '<span class="chip">' + esc(p.status) + '</span>';
+      } else {
+        cell = '<span class="flat">—</span>';
+      }
+      return '<tr><td class="num">' + esc(j.time) + '</td><td>' + esc(j.desc) +
+        '<span class="flat num" style="font-size:10px;margin-left:6px">' + esc(j.mode) + '</span></td>' +
+        '<td>' + cell + '</td></tr>';
+    }).join('');
+  }
+
+  // ---------------------------------------------------------------- 成本
+  function renderCost(z) {
+    if (!z.ok) { $('#cost-body').innerHTML = '<div class="empty">' + errText(z.error) + '</div>'; return; }
+    const d = z.data, b = d.budget || {};
+    $('#k-spent').textContent = money(b.spent);
+    $('#k-spent-d').textContent = b.enabled
+      ? (b.exceeded ? '已超预算 ' + money(b.spent - b.cap) : '剩余 ' + money(b.remaining))
+      : '闸门关闭';
+    const days = d.days || [];
+    const today = days[days.length - 1] || {};
+    $('#k-tok').textContent = num(today.tokens);
+    $('#k-tok-d').textContent = num(today.calls) + ' 次调用';
+    const ratio = (b.enabled && b.ratio != null) ? b.ratio : 0;
+    $('#k-ratio').textContent = b.enabled ? (ratio * 100).toFixed(1) + '%' : '—';
+    $('#k-bar').style.width = Math.min(100, Math.max(0, ratio * 100)) + '%';
+    $('#k-bar').style.background = b.exceeded ? 'var(--rd)' : (ratio > 0.8 ? 'var(--am)' : 'var(--cy)');
+    $('#k-avg').textContent = money(d.avg_workday_cost);
+    $('#k-avg-d').textContent = (d.workday_count || 0) + ' 个工作日';
+
+    const purposes = (d.by_purpose || []).slice(0, 6);
+    if (!purposes.length) { $('#cost-body').innerHTML = '<div class="empty">无调用记录</div>'; return; }
+    $('#cost-body').innerHTML = purposes.map(p =>
+      '<div class="stage"><span class="n">' + esc(p.key) + '</span>' +
+      '<span class="v">' + money(p.cost) + '</span>' +
+      '<span class="flat" style="font-size:10px;width:52px;text-align:right">' +
+      num(p.calls) + ' 次</span></div>').join('');
+  }
+
+  // ---------------------------------------------------------------- 模型
+  let ALL_MODELS = [];      // [{model, provider, provider_name}]，功能下拉的选项源
+
+  let sysMsgTimer = null;
+  function sysMsg(text, ok) {
+    const el = $('#sys-msg');
+    if (!el) return;
+    el.textContent = text;
+    el.className = 'sys-msg on ' + (ok ? 'ok' : 'err');
+    clearTimeout(sysMsgTimer);
+    sysMsgTimer = setTimeout(() => { el.className = 'sys-msg'; }, 6000);
+  }
+
+  async function sysPost(body) {
+    let j;
+    try {
+      const r = await fetch('/api/system/models', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body)
+      });
+      j = await r.json();
+    } catch (e) {
+      sysMsg('保存失败：' + (e && e.message ? e.message : '网络错误'), false);
+      return;
+    }
+    if (j && j.ok) {
+      sysMsg((j.data && j.data.message) || '已保存', true);
+      loadModels();            // 重取：实际生效模型由后端算，本地猜会与 tier 兜底对不上
+    } else {
+      const err = (j && j.error) || {};
+      sysMsg(err.detail || err.type || '保存被拒绝', false);
+    }
+  }
+
+  function renderModels(z) {
+    if (!z.ok) {
+      $('#prov-body').innerHTML = '<tr><td colspan="4" class="empty">' + errText(z.error) + '</td></tr>';
+      $('#feat-body').innerHTML = '<tr><td colspan="3" class="empty">' + errText(z.error) + '</td></tr>';
+      return;
+    }
+    const d = z.data;
+    ALL_MODELS = d.all_models || [];
+    $('#prov-note').textContent = d.providers.length + ' 家 · 默认 ' + (d.default_provider || '—');
+
+    $('#prov-body').innerHTML = d.providers.map(p => {
+      const acts = (p.default ? '' :
+        '<button class="mini-btn" data-act="default" data-id="' + esc(p.id) + '">设为默认</button>') +
+        '<button class="mini-btn" data-act="models" data-id="' + esc(p.id) + '">模型清单</button>' +
+        '<button class="mini-btn" data-act="toggle" data-id="' + esc(p.id) +
+        '" data-on="' + (p.enabled ? '1' : '0') + '">' + (p.enabled ? '停用' : '启用') + '</button>';
+      return '<tr><td>' + esc(p.name) + (p.default ? ' <span class="chip ok">默认</span>' : '') + '</td>' +
+        '<td class="num" style="font-size:11px">' + esc(p.endpoint) + '</td>' +
+        '<td class="num" style="font-size:11px">' + (p.models || []).length + ' 个</td>' +
+        '<td>' + (p.ready ? '<span class="chip ok">已配置</span>' : '<span class="chip bad">缺密钥</span>') +
+        (p.enabled ? '' : ' <span class="chip">停用</span>') +
+        ' <span style="margin-left:6px">' + acts + '</span></td></tr>';
+    }).join('');
+
+    const feats = d.features || [];
+    if (!feats.length) { $('#feat-body').innerHTML = '<tr><td colspan="3" class="empty">无登记功能</td></tr>'; return; }
+    $('#feat-body').innerHTML = feats.map(f => {
+      // 选项：第一项＝跟随默认。括号里写**实际生效**的模型，否则"跟随默认"
+      // 等于什么都没告诉你（看不出最终用的是 flash 还是 pro）。
+      const opts = ['<option value="">跟随默认 · ' + esc(f.model) + '</option>'];
+      let inList = false;
+      ALL_MODELS.forEach(m => {
+        if (m.model === f.override) inList = true;
+        opts.push('<option value="' + esc(m.model) + '"' +
+          (m.model === f.override ? ' selected' : '') + '>' +
+          esc(m.model) + ' · ' + esc(m.provider) + '</option>');
+      });
+      // 覆盖值不在任何厂商的清单里（手改过配置/厂商换了模型列表）：
+      // 补一个选项，否则下拉会静默跳到第一项，看起来像"我设的被清掉了"。
+      if (f.override && !inList) {
+        opts.push('<option value="' + esc(f.override) + '" selected>' +
+                  esc(f.override) + ' · 未在厂商清单</option>');
+      }
+      const grp = f.group ? ' <span style="color:var(--tx3);font-size:10px">' + esc(f.group) + '</span>' : '';
+      const res = f.reserved ? ' <span class="chip">预留</span>' : '';
+      return '<tr><td>' + esc(f.label) + grp + res + '</td>' +
+        '<td><select class="feat-sel' + (f.override ? ' on' : '') +
+        '" data-feat="' + esc(f.feature) + '">' + opts.join('') + '</select></td>' +
+        '<td class="num">' + num(f.calls) +
+        (f.failed ? ' <span class="chip bad">失 ' + f.failed + '</span>' : '') + '</td></tr>';
+    }).join('');
+  }
+
+  // 下拉：change 即写盘。**不做二次确认**——人自己选的，确认动作就是这一下；
+  // 再弹一个框只会让人以为"选了没生效"。
+  if ($('#feat-body')) {
+    $('#feat-body').addEventListener('change', (e) => {
+      const sel = e.target.closest ? e.target.closest('.feat-sel') : null;
+      if (!sel) return;
+      sel.disabled = true;                 // 防连点：写盘要几十毫秒，重复提交会互相覆盖
+      sysPost({action: 'feature', feature: sel.dataset.feat, model: sel.value});
+    });
+  }
+
+  if ($('#prov-body')) {
+    $('#prov-body').addEventListener('click', (e) => {
+      const b = e.target.closest ? e.target.closest('.mini-btn') : null;
+      if (!b) return;
+      const id = b.dataset.id;
+      const act = b.dataset.act;
+      if (act === 'default') {
+        sysPost({action: 'default', provider: id});
+      } else if (act === 'toggle') {
+        sysPost({action: 'provider_enabled', provider: id, enabled: b.dataset.on !== '1'});
+      } else if (act === 'models') {
+        const cur = ALL_MODELS.filter(m => m.provider === id).map(m => m.model).join(', ');
+        const v = prompt('编辑「' + id + '」的模型清单（逗号分隔，改动会写进 llm_providers.json）：', cur);
+        if (v === null) return;
+        const list = v.split(',').map(s => s.trim()).filter(Boolean);
+        if (!list.length) { sysMsg('至少要保留一个模型', false); return; }
+        sysPost({action: 'provider_models', provider: id, models: list});
+      }
+    });
+  }
+
+  // ---------------------------------------------------------------- 审计与留痕
+  // 三块各自独立降级：一块读失败只让那一块显示原因（后端 errors 已分键返回）。
+  const STANCE = [['bull', '看多'], ['bear', '看空'], ['neutral', '中性'], ['unscored', '判不出']];
+
+  function renderAudit(z) {
+    if (!z.ok) {
+      const t = errText(z.error);
+      $('#chg-body').innerHTML = '<tr><td colspan="5" class="empty">' + t + '</td></tr>';
+      $('#push-body').innerHTML = '<div class="empty">' + t + '</div>';
+      $('#sent-body').innerHTML = '<div class="empty">' + t + '</div>';
+      return;
+    }
+    const d = z.data;
+    const errs = d.errors || {};
+
+    // ① 配置变更：change_id 末段 +-restore 的是"回滚动作本身"，标出来避免误读成新变更
+    const chg = d.changes || [];
+    $('#chg-note').textContent = chg.length + ' 条';
+    $('#chg-body').innerHTML = errs.changes
+      ? '<tr><td colspan="5" class="empty err">' + esc(errs.changes) + '</td></tr>'
+      : (chg.length ? chg.map(r => {
+        const isRestore = String(r.change_id || '').includes('-restore');
+        return '<tr><td class="num">' + esc((r.created_at || '').slice(5, 16)) + '</td>' +
+          '<td class="num">' + esc(String(r.tool || '').replace(/^tool_/, '')) + '</td>' +
+          '<td>' + (isRestore ? '<span class="chip warn">回滚</span> ' : '') +
+          esc(r.action || '') + '</td>' +
+          '<td style="white-space:normal">' + esc(r.summary || '') + '</td>' +
+          '<td>' + (r.ok ? '<span class="chip ok">成功</span>'
+            : '<span class="chip bad">失败</span>') + '</td></tr>';
+      }).join('') : '<tr><td colspan="5" class="empty">尚无配置变更记录</td></tr>');
+
+    // ② 推送流水：status<>ok 就是"该推没推成功"
+    const ps = d.pushes || [];
+    $('#push-note').textContent = (d.counts && d.counts.pushes_ok != null)
+      ? (d.counts.pushes_ok + ' 成功' + (d.counts.pushes_failed ? ' / ' + d.counts.pushes_failed + ' 失败' : ''))
+      : ps.length + ' 条';
+    $('#push-body').innerHTML = errs.pushes
+      ? '<div class="empty err">' + esc(errs.pushes) + '</div>'
+      : (ps.length ? ps.map(r =>
+        '<div class="li"><span class="k">' + esc(r.day || '') + ' ' + esc(r.channel || '') + '</span>' +
+        '<span class="v">' + (r.status === 'ok' ? '<span class="chip ok">已送达</span>'
+          : '<span class="chip bad">' + esc(r.status || '未知') + '</span>') +
+        ' ' + esc((r.title || '').slice(0, 24)) + '</span></div>' +
+        (r.detail ? '<div class="ft">' + esc(String(r.detail).slice(0, 120)) + '</div>' : '')
+      ).join('') : '<div class="empty">尚无推送记录</div>');
+
+    // ③ 情绪标注留痕：unscored 是"判不出方向"，不是"中性" ⇒ 单独一列，不进任何分子
+    const s = d.sentiment;
+    if (errs.sentiment) {
+      $('#sent-body').innerHTML = '<div class="empty err">' + esc(errs.sentiment) + '</div>';
+      $('#sent-note').textContent = '不可用';
+      return;
+    }
+    if (!s || !s.total) {
+      $('#sent-note').textContent = '无记录';
+      $('#sent-body').innerHTML = '<div class="empty">尚无情绪标注记录</div>';
+      return;
+    }
+    const lab = (s.by_labeler || []).map(x =>
+      esc(x.labeler || '—') + ' ' + x.n).join(' · ');
+    $('#sent-note').textContent = s.total + ' 条 · ' + (s.by_labeler || []).length + ' 个标注器';
+    $('#sent-body').innerHTML =
+      (s.per_day || []).map(r =>
+        '<div class="li"><span class="k num">' + esc(r.date || '') + '</span>' +
+        '<span class="v num">' + STANCE.map(([k, zh]) =>
+          '<span class="chip' + (k === 'unscored' ? ' warn' : '') + '">' +
+          zh + ' ' + (r[k] || 0) + '</span>').join(' ') +
+        ' <span class="ft">共 ' + (r.total || 0) + '</span></span></div>').join('') +
+      '<div class="ft" style="margin-top:8px;padding-top:8px;border-top:1px solid var(--line)">' +
+      '标注器：' + lab + '；「判不出」= 规则/模型没给出方向，<b>不是中性</b>，不计入任何分子</div>';
+  }
+
+  function loadAudit() {
+    return get('/api/system/audit?limit=30').then(renderAudit).catch(() => {
+      $('#chg-body').innerHTML = '<tr><td colspan="5" class="empty err">API 不可达</td></tr>';
+    });
+  }
+
+  // ---------------------------------------------------------------- 刷新
+  function loadModels() {
+    return get('/api/system/models').then(renderModels).catch(() => {
+      $('#feat-body').innerHTML = '<tr><td colspan="3" class="empty err">API 不可达</td></tr>';
+    });
+  }
+
+  // ⚠️ `withModels` 不是可选优化，是**必须**：模型区是 innerHTML 整块重建的，
+  //    10s 定时器一刷，用户正在打开的下拉框会连同已选项一起被替换掉
+  //    （表现为"刚选好又跳回去了"）。所以定时刷新只动健康/任务/成本，
+  //    模型区只在进页面、点「刷新」、以及保存成功后更新。
+  function refresh(withModels) {
+    return Promise.all([
+      get('/api/system/health'), get('/api/system/tasks'),
+      get('/api/system/cost?days=7'), get('/api/meta'),
+    ]).then(([h, t, c, meta]) => {
+      renderHealth(h); renderTasks(t); renderCost(c);
+      if (meta.ok) {
+        $('#ft').textContent = 'API ' + meta.data.version + ' · 模板 ' +
+          meta.data.template_version + ' · 本地时间 ' + new Date().toLocaleTimeString('zh-CN');
+      }
+      if (withModels) loadModels();
+    }).catch(() => { $('#ft').textContent = 'API 不可达'; });
+  }
+
+  $('#btn-reload').addEventListener('click', () => { refresh(true); loadAudit(); });
+  refresh(true);
+  // 审计流水不会 10s 变一次（配置变更/推送都是低频），跟着 10s 轮询刷是白费请求
+  loadAudit();
+  setInterval(() => refresh(false), 10000);
+})();
+</script>
+</body>
+</html>

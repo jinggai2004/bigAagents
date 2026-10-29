@@ -1,0 +1,27 @@
+#!/bin/sh
+# 本地"CI"：本仓库没有远程，GitHub Actions 之类不适用，所以用 git 钩子兜住质量。
+#
+# 触发时机：git push（将来接了远程就自动生效；现在可用 `git config core.hooksPath .githooks` 启用）
+# 策略：只跑快速集（排除 UI 页面 smoke）——推送前不该等 5 分钟。
+#      全量请手动跑：  运行测试.bat full
+#
+# 三个环境变量的意义见 运行测试.bat 顶部注释，缺一个都会出现"单独跑绿、一起跑红"。
+
+set -e
+
+# 解释器定位：BIGA_PYTHON 环境变量 > 本机默认路径 > PATH 中的 python。
+# 换机器/CI 只需 export BIGA_PYTHON=...，不必改这个受版本控制的文件。
+# ⚠️ 本项目必须用装了 pytest 的解释器（系统 Python 3.12）；托管版 3.13 没有 pytest，
+#    被选中会出现"命令能跑但 pytest 收集失败"。
+# BIGA_PYTHON 未设时用 PATH 里的 python（装好 requirements 后即含 pytest）。
+PY="${BIGA_PYTHON:-python}"
+[ -x "$PY" ] || PY="$(command -v python 2>/dev/null || echo python)"
+
+CODEBUDDY_SAFE_DELETE_ENABLED=0
+PYTHONIOENCODING=utf-8
+export CODEBUDDY_SAFE_DELETE_ENABLED PYTHONIOENCODING
+
+BT="temp/pytest_hook_$(date +%Y%m%d_%H%M%S)"
+
+echo "== pre-push: 快速测试集（排除 UI smoke）=="
+"$PY" -m pytest tests -q --basetemp="$BT" -n 4 --ignore=tests/test_ui_pages_smoke.py
