@@ -70,3 +70,6 @@ output/*
 
 # 根级 tushare stock_basic 缓存（运行时生成）
 /stock_basic_cache.json
+
+# 编程工具会话产物
+.zcode/
