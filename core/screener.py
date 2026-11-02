@@ -18,6 +18,7 @@ import logging
 import os
 import time
 from typing import Optional
+from core import liquidity_floor as _lf
 from core.sector import get_weights, classify_by_board
 from db import store
 from utils.task_control import TaskCancelled
@@ -48,8 +49,8 @@ STRATEGIES = {
     #  `output/选股重复度过高_根因分析与改进方案.md`）。
     "主力资金": "近5日主力净流入排序（本地资金流快照）",
     "技术突破": "当日涨幅0.5%~7% + 换手1%~15% 按成交额降序（MACD/均线由因子精筛体现）",
-    "低估值成长": "0<PE<30 按 PE 升序（净利同比/ROE 暂无本地数据源）",
-    "龙虎榜活跃": "暂无本地数据源（该路当前不可用，会显式标注）",
+    "低估值成长": "0<PE<30 + 净利同比>20% + ROE>10%（东财财务 PIT，按公告日对齐）",
+    "龙虎榜活跃": "近5日上榜 + 机构净买额>1000万（东财机构专用席位汇总）",
     "行业龙头": "总市值>200亿 按市值降序（近20日涨幅<15% 由趋势因子体现）",
 }
 
@@ -139,8 +140,19 @@ _PROGRESS_SPANS = {
     "prefetch": (45, 70),
     # 流动性下限（2026-10-29）：零联网、毫秒级，但要给一段独立区间 ——
     # 不登记就会走 (0,100) 兜底把 percent 拉回 0（这个坑注释里已经写过一次）。
-    "liquidity": (70, 72),
-    "score": (72, 98),     # 逐股因子精筛（本地计算，取数已在 prefetch 完成）
+    "liquidity": (70, 71),
+    # 交易拥挤度闸门（2026-10-30）：读预计算快照，毫秒级，同样必须**登记区间**。
+    # 漏登记的后果就是上面两段注释写的那件事：percent 从 72 跳回 0，
+    # `test_progress_callback_emits_stages_and_monotonic_percent` 当场抓红。
+    "crowding": (71, 72),
+    # 盈利质量闸门（2026-10-31）：只读候选池自己的财报文件，毫秒级；
+    # 同样必须登记区间，否则 (0,100) 兜底把 percent 拉回 0（前两段的坑）。
+    "quality": (72, 73),
+    # 用户自定义因子闸门（2026-11-01）：默认不启用（无 applied 因子时零开销跳过）。
+    # ⚠️ 区间必须**紧接在它实际执行的位置之后**（quality 之后、score 之前），
+    #    否则 percent 会回退——`test_progress_callback_..._monotonic` 会当场抓红。
+    "user_gate": (73, 74),
+    "score": (74, 98),     # 逐股因子精筛（本地计算，取数已在 prefetch 完成）
     "done": (98, 100),
 }
 
@@ -323,6 +335,40 @@ class StockScreener:
         if liq_meta.get("note"):
             _emit_progress(progress_cb, "liquidity", 1, 1, liq_meta["note"])
 
+        # === Stage 3.7: 交易拥挤度闸门（2026-10-30）===
+        # 放在流动性下限**之后**：两者都是减法，先剔流动性噪声再判拥挤，
+        # 被剔原因才归得到唯一一个门槛（顺序反过来会让"又小又热"的票只留下
+        # "流动性"这一条理由，看起来像是流动性门槛太严）。
+        # ⚠️ 与流动性下限同一条作用域纪律：只在这条五路初筛链路上生效，
+        #    `score_codes()` 不经过它 —— 用户点名要看的票不该被闸门悄悄删掉。
+        _emit_progress(progress_cb, "crowding", 0, 1, "交易拥挤度闸门")
+        unique, crowd_meta = self._apply_crowding_gate(unique)
+        if crowd_meta.get("note"):
+            _emit_progress(progress_cb, "crowding", 1, 1, crowd_meta["note"])
+
+        # === Stage 3.8: 盈利质量闸门（2026-10-31）===
+        # 剔除 ocf_to_np（经营现金流/归母净利）最差 10%。A/B 结论：**只做闸门
+        # 不做分数**——混入等权合成（AF 臂）押注段超额 −9.47%，闸门式（AFG 臂）
+        # +2.26% 且回撤更浅。作用域与流动性下限/拥挤度同一条纪律：
+        # 只在五路初筛链路生效，`score_codes()` 不经过。
+        _emit_progress(progress_cb, "quality", 0, 1, "盈利质量闸门")
+        unique, q_meta = self._apply_quality_gate(unique)
+        if q_meta.get("note"):
+            _emit_progress(progress_cb, "quality", 1, 1, q_meta["note"])
+
+        # === Stage 3.9: 用户自定义因子闸门（2026-11-01） ===
+        # 只有 `user_factors.status='applied'` 的因子参与；一个都没有时零开销空转
+        # （不会去加载 50 秒的面板）。
+        # ⚠️ 这里是"应用"的**落地分支**。光有 `set_status` 的判据、页面能点"应用"，
+        #    而选股链没有这一步，就还是「动作静默消失」那类事故（阿深 set_wake 的教训：
+        #    判据放行只是门票，落地分支才是接线）。
+        _emit_progress(progress_cb, "user_gate", 0, 1, "自定义因子闸门")
+        unique, u_meta = self._apply_user_gates(unique)
+        if u_meta.get("note") or u_meta.get("applied"):
+            _emit_progress(progress_cb, "user_gate", 1, 1,
+                           u_meta.get("note") or
+                           f"剔除 {sum(g.get('dropped', 0) for g in u_meta.get('gates') or [])} 只")
+
         # === Stage 4: 加权因子精筛（单一权重集） ===
         # ⚠️⚠️ 资金流并发预取**必须在这里也调一次**（2026-10-24 修）：
         #   我 10-23 只把它挂在 `score_codes()`（页面/工具走那条），而调度器走的是
@@ -356,6 +402,19 @@ class StockScreener:
             # 流动性下限执行明细（阈值/日期/被剔除清单）：**门槛必须可复核**，
             # 否则用户只看到候选变少而不知道为什么（与 stale_skipped 同一纪律）。
             "liquidity_floor": liq_meta,
+            # 交易拥挤度闸门执行明细（快照日/阈值/被剔除清单）。
+            # ⚠️ 这个字段是"闸门到底生效了没有"的唯一线索：快照缺失时它会写
+            #    note="未生效"，而不是静默放行 —— 否则"今天没有拥挤的票"与
+            #    "闸门根本没跑"在页面上完全无法区分。
+            "crowding_gate": crowd_meta,
+            # 盈利质量闸门执行明细（asof/阈值/覆盖率/被剔除清单）。
+            # 与 crowding_gate 同一纪律：生效与否必须 result 级可见，
+            # "今天没有质量差的票"与"闸门根本没跑"不能混淆。
+            "quality_gate": q_meta,
+            # 用户自定义因子闸门执行明细（asof/各闸门阈值/覆盖/剔除数）。
+            # 与上面两个闸门同一纪律：生效与否必须 result 级可见——
+            # "今天这批票都没被剔" 与 "闸门根本没跑" 不能混淆。
+            "user_gate": u_meta,
             # 本次波动率口径计数（ivol / total / none）—— 全 total 说明市场因子没接上
             "vol_basis": dict(self.last_vol_basis),
             # 波动率分位的**作用域**（industry/pool/mixed）—— pool 意味着行业映射没拿到，
@@ -797,13 +856,15 @@ class StockScreener:
     # ret5 −0.0438 vs −0.0479），见 `output/文献选股因子可实践性_2026-10-29.md`。
     # ⚠️ 代价必须说清：池子缩 ≈30%，与"扩大候选域"的方向相反 —— 这是有意识的交换，
     #    不是顺手加的过滤器。
-    LIQ_FLOOR_PCT = 0.30
+    # ⚠️ 阈值口径（30% 分位 / 按板块 / 三条边界）的唯一来源是 `core.liquidity_floor`
+    #    （2026-10-31 抽出）：回测也要用同一条线，两处各写一份必然漂移，
+    #    而漂移的表现是"回测选出的票线上会剔掉"，不像 bug、只像"策略变差了"。
+    LIQ_FLOOR_PCT = _lf.LIQ_FLOOR_PCT
 
     @staticmethod
     def _liq_floor_enabled() -> bool:
         """开关（运行时解析）。默认**开**；`BIGA_LIQ_FLOOR=0/false/off/no` 关。"""
-        v = str(os.environ.get("BIGA_LIQ_FLOOR", "1")).strip().lower()
-        return v not in ("0", "false", "off", "no", "")
+        return _lf.floor_enabled()
 
     @staticmethod
     def _liquidity_threshold() -> Optional[dict]:
@@ -830,9 +891,7 @@ class StockScreener:
         Returns: `{"date", "pct", "overall", "by_board": {板块: 阈值}, "n_market"}`
                  快照不可用 ⇒ None。
         """
-        from core.sector import classify_by_board
         from db import store
-        pct = StockScreener.LIQ_FLOOR_PCT
         conn = store.get_connection()
         try:
             row = conn.execute(
@@ -845,22 +904,12 @@ class StockScreener:
                 "AND amount IS NOT NULL AND amount > 0", (d,)).fetchall()
         finally:
             conn.close()
-        if len(rows) < 100:
+        # 阈值计算（分位/按板块/样本不足退化）全在 `core.liquidity_floor`——
+        # 这里只负责"从哪张表取数"（线上用当日快照，回测用 20 日均额）。
+        th = _lf.build_thresholds({str(r["stock_code"]): float(r["amount"]) for r in rows})
+        if th is None:
             return None
-        groups: dict[str, list] = {}
-        for r in rows:
-            groups.setdefault(classify_by_board(str(r["stock_code"])), []).append(
-                float(r["amount"]))
-        allv = sorted(v for vs in groups.values() for v in vs)
-        overall = allv[max(0, min(int(len(allv) * pct), len(allv) - 1))]
-        by_board = {}
-        for b, vs in groups.items():
-            if len(vs) < 100:                       # 样本太少：该板块用全市场阈值
-                continue
-            vs.sort()
-            by_board[b] = vs[max(0, min(int(len(vs) * pct), len(vs) - 1))]
-        return {"date": d, "pct": pct, "overall": overall,
-                "by_board": by_board, "n_market": len(allv)}
+        return {"date": d, **th}
 
     @staticmethod
     def _candidate_amount(cand: dict, kline) -> Optional[float]:
@@ -900,25 +949,20 @@ class StockScreener:
             meta["note"] = "快照成交额不可用 ⇒ 流动性下限未生效（不剔除任何候选）"
             _logger.warning("[选股] %s", meta["note"])
             return candidates, meta
-        keep, dropped = [], []
-        for c in candidates or []:
-            code = str(c.get("股票代码") or "")
-            board = classify_by_board(code)
-            # 板块有自己的阈值就用它；否则退回全市场（板块样本 <100 只或市场外代码）
-            limit = th["by_board"].get(board, th["overall"])
-            amt = self._candidate_amount(c, self._kline_cache.get(code))
-            if amt is None:
-                keep.append(c)                       # 缺数据：保留
-            elif amt < limit:
-                dropped.append({"股票代码": code, "股票名称": c.get("股票名称") or "",
-                                "板块": board, "成交额": round(amt / 1e8, 3),
-                                "阈值": round(limit / 1e8, 3)})
-            else:
-                keep.append(c)
-        if len(keep) < 10:
-            meta["note"] = (f"按成交额下限本应剔除 {len(dropped)} 只，但剩余仅 "
-                            f"{len(keep)} 只 ⇒ 放弃过滤（样本太小）")
-            _logger.warning("[选股] %s", meta["note"])
+        by_code = {str(c.get("股票代码") or ""): c for c in (candidates or [])}
+        items = [(code, self._candidate_amount(c, self._kline_cache.get(code)))
+                 for code, c in by_code.items()]
+        res = _lf.split_by_floor(items, th)
+        kept_set = set(res["kept"])
+        keep = [c for code, c in by_code.items() if code in kept_set]
+        # 页面契约：`dropped` 要带股票名称与"亿"单位，供前端列表展示
+        dropped = [{"股票代码": d["code"],
+                    "股票名称": (by_code.get(d["code"]) or {}).get("股票名称") or "",
+                    "板块": d["board"], "成交额": round(d["amount"] / 1e8, 3),
+                    "阈值": round(d["limit"] / 1e8, 3)} for d in res["dropped"]]
+        if not res["applied"]:
+            # 未生效 / 放弃过滤：原样返回候选，但把原因写进 meta（页面要能看出为什么没筛）
+            meta["note"] = res["note"]
             return candidates, meta
         # 只把**实际用到的**板块阈值写进 meta（别把 5 个板块全塞进去，读的人只关心生效的那几个）
         used = sorted({d["板块"] for d in dropped}) if dropped else []
@@ -935,6 +979,78 @@ class StockScreener:
             _logger.info("[选股] %s；被剔除：%s", meta["note"],
                          "、".join(f"{d['股票代码']}({d['成交额']}亿)" for d in dropped[:8]))
         return keep, meta
+
+    # ── 交易拥挤度闸门（2026-10-30）──────────────────────────────────
+    # 依据 Baker & Stein (2004 JFM)：高换手/高流动性预测后续低回报；
+    # 本项目 11 年全市场实测（2,133,566 行 / 5,511 只 / 519 期 / 不重叠窗口）：
+    # `crowd_trade = mean(换手率分位, log成交额分位)` 的 D10 相对 D1 跑输
+    # **−0.92pp**，分年 **11/11 为负**；剔波动率+市值后 −1.09pp、再剔动量 −0.78pp
+    # ⇒ 不是 IVOL 的另一种写法。
+    # ⚠️ **它是减法闸门，不是评分因子**：价量因子 IC 全负（11/11 年），
+    #    进 `FACTOR_WEIGHTS` 会变成"越拥挤分数越高"，方向正好反了。
+    #    这条由 `tests/test_crowding.py::test_not_in_factor_weights` 结构性钉住。
+    # ⚠️ 判据是 `crowd ≥ 0.9 且 mom20 ≥ 0.8`（and 不是 or）：双排序实测效应是
+    #    **交互**的（高波+拥挤 −0.97pp vs 低波+拥挤 −0.33pp），拆开任一维度都会
+    #    把结论削成噪声。
+    def _apply_crowding_gate(self, candidates: list, progress_cb=None) -> tuple:
+        """剔除"拥挤度前 10% 且 20 日涨幅前 20%"的候选（= 不新开仓）。
+
+        数据来自**预计算快照** `data/panel/crowd/{date}.parquet`（16:30 定时任务产出），
+        读取是毫秒级 —— 现场算一次要 146s，放进 696s 的选股任务是纯浪费。
+        口径与边界全部在 `core/crowding.apply_gate`，这里只负责把结果套回候选列表。
+        """
+        from core import crowding
+        codes = [str(c.get("股票代码") or "") for c in (candidates or [])]
+        keep, _dropped, meta = crowding.apply_gate(codes)
+        if not meta.get("applied"):
+            return candidates, meta
+        keepset = set(keep)
+        out = [c for c in candidates if str(c.get("股票代码") or "") in keepset]
+        return out, meta
+
+    def _apply_quality_gate(self, candidates: list, progress_cb=None) -> tuple:
+        """剔除盈利质量（ocf_to_np）最差 10% 的候选。
+
+        逻辑全部在 `core.financial_pit.apply_quality_gate`（同源纪律）；
+        这里只把结果套回候选列表。只读候选池自己的财报文件（~百只），
+        毫秒级，不影响 696s 的选股预算。
+        """
+        from core.financial_pit import apply_quality_gate
+
+        codes = [str(c.get("股票代码") or "") for c in (candidates or [])]
+        keep, _dropped, meta = apply_quality_gate(codes)
+        if not meta.get("applied"):
+            return candidates, meta
+        keepset = set(keep)
+        out = [c for c in candidates if str(c.get("股票代码") or "") in keepset]
+        return out, meta
+
+    def _apply_user_gates(self, candidates: list) -> tuple:
+        """用户自定义因子闸门（`user_factors` 里 status=applied 的那些）。
+
+        逻辑全在 `core.factor_lab.apply_gates`（同源纪律：与页面回测共用同一套
+        表达式求值），这里只把结果套回候选列表。
+
+        ⚠️ 没有已应用的因子时**必须零开销返回**：`factor_lab` 加载一次面板要
+        50 秒 + 数百 MB，不能让"没人用这个功能"的机器为此付费。
+        """
+        try:
+            from core import factor_lab as FL
+            if not FL.applied_gates():
+                return candidates, {"applied": False, "gates": [],
+                                    "note": "未启用自定义因子闸门"}
+            codes = [str(c.get("股票代码") or "") for c in (candidates or [])]
+            keep, _dropped, meta = FL.apply_gates(codes)
+        except Exception as e:                        # noqa: BLE001
+            # 闸门是附加项：它坏了不能把整轮选股带下去（宁可少一层过滤，
+            # 也不能让"用户填了个坏表达式"变成"今天没有选股结果"）
+            _logger.warning("[自定义因子闸门] 跳过（%s）: %s", type(e).__name__, e)
+            return candidates, {"applied": False, "gates": [],
+                                "note": f"闸门异常已跳过：{e}"}
+        if not meta.get("applied"):
+            return candidates, meta
+        keepset = set(keep)
+        return [c for c in candidates if str(c.get("股票代码") or "") in keepset], meta
 
     def _score_candidates(self, candidates: list[dict], progress_cb=None) -> list[dict]:
         """
@@ -1069,13 +1185,16 @@ class StockScreener:
         # ---- 逐因子评分（键与 core.sector.FACTOR_WEIGHTS 逐字一致） ----
         if weights.get("主力资金", 0.0) > 0:
             breakdown["主力资金"] = self._get_fund_factor(code)
-        pe_ratio = info.get("pe_ratio")
+        pe_ratio = self._pe_value(info.get("pe_ratio"))
         pe_source = "eastmoney" if pe_ratio is not None else None
         if pe_ratio is None:
             # B2③（2026-10-18 用户拍板：双口径 + 标来源）：联网拿不到 PE
-            # （离线模式 / 预取失败）⇒ 读本地 market_snapshot（新浪口径）。
+            # （离线模式 / 预取失败 / 返回 'N/A'）⇒ 读本地 market_snapshot（新浪口径）。
             # ⚠️ 与东财口径有系统性差异 ⇒ 明细必须标来源、screen_picks 落 pe_source。
-            pe_ratio = self._snapshot_pe(code)
+            # ⚠️ 必须用 `_pe_value()` 归一化后再判 None：取数器在
+            #    `skip_valuation=True` 时返回字符串 'N/A'（2026-11-01 修的根因，
+            #    见 `_pe_value` 的注释——这条兜底曾因此整整 10 天没执行过）。
+            pe_ratio = self._pe_value(self._snapshot_pe(code))
             if pe_ratio is not None:
                 pe_source = "snapshot_sina"
         if weights.get("PE估值", 0.0) > 0:
@@ -1621,6 +1740,32 @@ class StockScreener:
                 "vol_industry_n": vol_stats["industry"], "vol_pool_n": vol_stats["pool"],
                 "vol_missing_industry": vol_stats["missing"],
                 "note": ""}
+
+    @staticmethod
+    def _pe_value(v) -> Optional[float]:
+        """把取数结果里的 PE 规范化成 `float | None`（**缺就是缺**）。
+
+        ⚠️⚠️ 2026-11-01 根因修复：`skip_valuation=True` 时 `get_stock_info()`
+        返回的是字符串 **`'N/A'`**，不是 `None`。而打分侧原来写的是
+        `if pe_ratio is None: pe_ratio = self._snapshot_pe(code)` ⇒ `'N/A'`
+        直接穿透，快照兜底**永远不执行**，`_score_pe` 拿到字符串后走
+        `not isinstance(pe, (int,float))` 分支报"无PE数据"。
+        后果：10-22 起所有选股轮的 PE 因子都是 unknown（实测 10-29/10-30
+        全部 5 只 × 每轮），覆盖率固定 0.8235 = 1 − 15/85。
+        而**分位化那条路径用的是 `isinstance` 判断**（1647 行）⇒ 分位有值、
+        打分没值，两处口径错位，页面上只看到"无PE数据"。
+
+        口径：非数值（'N/A'/''/'-'/None）、NaN、<=0（亏损）一律 None；
+        上限（`PE_SANE_MAX`）不在这里过滤 —— 那是打分策略，不是数据有效性。
+        """
+        try:
+            f = float(v)
+        except (TypeError, ValueError) as e:
+            _logger.debug("PE 值不可转数字（按缺失处理）: %r: %s", v, e)
+            return None
+        if f != f or f <= 0:            # NaN / 亏损
+            return None
+        return f
 
     def _score_pe(self, pe, max_score: int = 15, pct: float = None,
                   peers: int = 0, scope: str = None) -> dict:

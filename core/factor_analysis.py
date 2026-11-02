@@ -38,6 +38,7 @@ import logging
 import warnings
 from dataclasses import dataclass, field
 
+import numpy as np
 import pandas as pd
 
 from core.condition_backtest import ConditionSignalGenerator
@@ -57,30 +58,51 @@ FACTORS = {
                    "note": "MA5 > MA10 > MA20，布尔因子"},
     "ma20_above": {"label": "站上20日均线", "direction": 1,
                    "note": "收盘价 > MA20，布尔因子"},
+    # ── 论文因子扫描晋身（2026-10-30，`output/因子论文扫描_30因子_回测报告_2026-10-30.md`）──
+    # 全市场月度截面回测（92 个月 / 5,614 只）｜t|≥4.5 且分年同号的 6 个。
+    # ⚠️ 负 IC 在本项目语义 = "高分位跑输" ⇒ 当作**剔除闸门**（低分位好）用，
+    #    与"分组不单调 ⇒ 只能分位筛不能多空"的既有结论一致。
+    "upshd20": {"label": "20日上影占比", "direction": -1,
+                "note": "((high−max(open,close))/close) 20 日均值；长上影=抛压（IC=−0.095, t=−5.2, 分年 8/8 负）"},
+    "turn_std20": {"label": "换手波动20", "direction": -1,
+                   "note": "换手率 20 日标准差（Chordia et al. 2001；IC=−0.090, t=−5.2, 分年 8/8 负）"},
+    "amihud20": {"label": "Amihud非流动性", "direction": 1,
+                 "note": "(|日收益|/成交额) 20 日均值×1e9（Amihud 2002；IC=+0.074, t=+4.9，Q5−Q1=+4.07%/月——容量受限）"},
+    "lndvol20": {"label": "log成交额20", "direction": -1,
+                 "note": "成交额 20 日均值取 log（流动性代理；IC=−0.109, t=−7.0，全场最强单因子）"},
+    "mom1m": {"label": "1月反转", "direction": -1,
+              "note": "close/close[−21]−1（Jegadeesh 1990；IC=−0.051, t=−3.4——A 股反转强动量弱）"},
+    "pv_corr20": {"label": "量价相关20", "direction": -1,
+                  "note": "日收益与 Δ换手的 20 日相关（量价背离；IC=−0.049, t=−5.2, 分年 8/8 负）"},
 }
 
 # 这一版算不了的因子 + 原因（写进报告，避免被读成"漏做"）
 UNAVAILABLE = {
     "pe": "需要历史截面（当期 PE 不能当历史 PE）；需逐日积累快照",
     "market_cap": "同上（需历史截面：历史股本 × 当时收盘价）",
-    "turnover": "同上（历史换手率需历史快照或流通股本）",
-    "amount": "日线可得，但**新浪日线的 amount 与当期快照口径不同**，暂不纳入",
+    # ⚠️ 2026-10-29 turn_share 全量回填后，换手率/成交额/流通股本**已可得**
+    #    （turn20/amihud20/lndvol20 等已晋身 FACTORS）——留此条目仅作历史记录。
     "fund_net": "历史资金流无稳定免费源",
     "news_positive": "历史舆情无稳定免费源",
 }
 
 
 def snapshot_gap_note() -> str:
-    """给用户看的"怎么才能算 PE/市值的 IC"（具体到可执行）"""
-    return ("要算 PE / 总市值 / 换手率的 IC，需要**逐日积累截面快照**："
-            "每个交易日收盘后跑一次 `data.sina_source.get_sector_snapshot()` 并落盘，"
-            "积累 N 个月后即可用本模块分析。当前只有当期快照，所以这三项暂不可算。"
-            "（已接入调度：`snapshot_flow`(15:40) 每天自动落库到 `market_snapshot` 表。）")
+    """给用户看的"怎么才能算 PE/市值的 IC"（具体到可执行）。
+
+    ⚠️ 2026-10-30 起**换手率不再在此列**：turn_share 全量回填后历史换手可得，
+       amihud20/turn_std20 等已晋身 FACTORS——SNAPSHOT_FACTORS 只剩 pe/market_cap。
+    """
+    return ("要算 PE / 总市值的 IC，需要**逐日积累截面快照**：每个交易日收盘后由"
+            " `snapshot_flow`(15:40) 调 `data.sina_source.get_sector_snapshot()` 并落库到"
+            " `market_snapshot` 表，积累 ≥60 个交易日后即可用本模块分析。"
+            "换手率/成交额类因子已由 turn_share 回填解决（不依赖快照）。")
 
 
 # 需要"历史截面"才能算的因子。它们与 K 线因子的区别在数据形态：
 # K 线因子任何历史交易日都能重算，而这几项的**绝对水平**只存在于当时的快照里。
-SNAPSHOT_FACTORS = ("pe", "market_cap", "turnover")
+# ⚠️ 2026-10-30 起换手率移出：turn_share 回填后不依赖快照（amihud20 等已进 FACTORS）
+SNAPSHOT_FACTORS = ("pe", "market_cap")
 
 # 攒够多少个交易日的截面，才认为 IC 有统计意义。
 # 取 60（≈ 3 个月）：IC 本身是"每期一个数"，60 期才有足够的样本算 ICIR / t 值
@@ -162,7 +184,22 @@ def _num(v):
     return None if f != f else f
 
 
-def load_bars(codes, start, end, progress_cb=None) -> dict:
+def _guard_one(df: pd.DataFrame, code: str) -> pd.DataFrame:
+    """单只日线的守卫裁剪（`load_bars` 用）。返回可能为空表。"""
+    import os as _os
+
+    if _os.environ.get("BIGA_NO_UNIVERSE_GUARD", "").strip().lower() in ("1", "true", "yes"):
+        return df
+    from core import universe_guard as _ug
+    from data import bars as _bars_mod
+
+    if df is None or len(df) == 0 or "date" not in df.columns:
+        return df
+    kept, _cut = _ug.trim_with_stats(df, _bars_mod._clean(code))
+    return kept
+
+
+def load_bars(codes, start, end, progress_cb=None, guard: bool = True) -> dict:
     """加载并派生因子列。**复用 `ConditionSignalGenerator._prepare`** ——
     与条件回测用同一套派生逻辑，避免"两处算的 MA 不一样"这类漂移。
 
@@ -173,6 +210,7 @@ def load_bars(codes, start, end, progress_cb=None) -> dict:
     bars_map = {}
     total = max(1, len(codes))
     missing: list[str] = []
+    trimmed_out: list[str] = []          # 整段不可比（不是取数失败，分开记）
     for i, code in enumerate(codes, 1):
         if progress_cb:
             progress_cb({"percent": 5 + i / total * 70,
@@ -181,6 +219,13 @@ def load_bars(codes, start, end, progress_cb=None) -> dict:
         if df is None:
             missing.append(code)
             continue
+        if guard:
+            # ⚠️ 先裁再派生：`_enrich` 里的 MA60/波动率会吃到窗口前段价格，
+            #    拿不可比区间（上市初期、停牌跨段）算出来的指标本身就是脏的。
+            df = _guard_one(df, code)
+            if len(df) == 0:
+                trimmed_out.append(str(code))
+                continue
         df = _enrich(df)
         if len(df) >= 40:
             bars_map[_bars._clean(code)] = df
@@ -188,6 +233,8 @@ def load_bars(codes, start, end, progress_cb=None) -> dict:
     if missing and _bars.offline_mode():
         _logger.info("[factor] 离线模式：跳过 %d 只本地缺失代码（%s...）",
                      len(missing), ",".join(missing[:5]))
+        if trimmed_out:
+            _logger.info("[factor] 宇宙守卫：%d 只整段不可比已剔除", len(trimmed_out))
         return bars_map
     for i, code in enumerate(missing, 1):
         if progress_cb:
@@ -196,11 +243,19 @@ def load_bars(codes, start, end, progress_cb=None) -> dict:
         df = sina_source.fetch_stock_daily(code, start, end)
         if df is None or df.empty:
             continue
+        if guard:
+            df = _guard_one(df, code)
+            if len(df) == 0:
+                trimmed_out.append(str(code))
+                continue
         df = _enrich(df)
         if len(df) >= 40:
             bars_map[code] = df
     if missing:
         _logger.info("[factor] 本地缺 %d/%d 只，已联网兜底", len(missing), len(codes))
+    if trimmed_out:
+        _logger.info("[factor] 宇宙守卫：%d 只整段不可比已剔除（%s）",
+                     len(trimmed_out), ",".join(trimmed_out[:5]))
     return bars_map
 
 
@@ -224,6 +279,25 @@ def _enrich(df):
     # 布尔因子（取值 0/1）——与条件回测的 `conditions` 口径一致
     df["ma_bullish"] = (df["ma5"] > df["ma10"]) & (df["ma10"] > df["ma20"])
     df["ma20_above"] = close > df["ma20"]
+    # ── 论文因子扫描晋身的 6 个（2026-10-30）──
+    # ⚠️ turn/outstanding 来自 turn_share 回填，尾部 1~2 天未回填 ⇒ ffill(3)，
+    #    与 `scripts/factor_paper_scan.py`（月度截面扫描）同口径。
+    # ⚠️ 列可能缺失（合成测试/旧数据）⇒ 用 NaN 序列占位，**列必须存在**（覆盖守护）
+    def _col(name: str) -> pd.Series:
+        if name in df.columns:
+            return pd.to_numeric(df[name], errors="coerce")
+        return pd.Series(np.nan, index=df.index)
+
+    r = close.pct_change()                      # 日收益（amihud/量价相关用）
+    turn = _col("turnover_pct").ffill(limit=3)
+    amt = _col("amount")
+    high, opn = pd.to_numeric(df["high"], errors="coerce"), pd.to_numeric(df["open"], errors="coerce")
+    df["upshd20"] = ((high - np.maximum(opn, close)) / close).rolling(20).mean()
+    df["turn_std20"] = turn.rolling(20).std()
+    df["amihud20"] = (r.abs() / amt.replace(0.0, np.nan)).rolling(20).mean() * 1e9
+    df["lndvol20"] = np.log(amt.rolling(20).mean().replace(0.0, np.nan))
+    df["mom1m"] = close / close.shift(21) - 1.0
+    df["pv_corr20"] = r.rolling(20).corr(turn.diff())
     return df
 
 
@@ -275,13 +349,70 @@ def build_panel(bars_map, factors, dates, horizon) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _guard_bars_map(bars_map: dict) -> dict:
+    """对已加载的日线逐只**裁剪不可比区间**（上市满一年 / 北交所开市前）。
+
+    为什么必须在因子分析里做：IC 是"截面排序"的统计量，只要有一只票在某个采样日
+    还处于"上市初期/停牌跨段"，它的未来收益就会被复牌跳空污染，而 RankIC 对
+    极端值敏感——一只 +142% 的伪样本足以把整期 IC 拉偏。
+
+    与被裁空（整票不可比）的票**直接丢弃并计数**：它在本区间没有任何可比历史，
+    留着只会贡献 NaN 行。计数要报日志，否则"票数变少"会被误读成取数失败。
+    """
+    import os as _os
+
+    if _os.environ.get("BIGA_NO_UNIVERSE_GUARD", "").strip().lower() in ("1", "true", "yes"):
+        return bars_map
+    from core import universe_guard as _ug
+
+    out = {}
+    cut_rows = 0
+    emptied = []
+    unknown = []
+    for code, df in bars_map.items():
+        if df is None or len(df) == 0:
+            continue
+        if "date" not in df.columns:
+            # 没有日期列就没法判可比性；如实保留并提示，不静默丢数据
+            _logger.warning("[factor] %s 缺 date 列，跳过了宇宙守卫", code)
+            out[code] = df
+            continue
+        # ⚠️ 区分两种"被剔"的原因——它们对用户的含义完全不同：
+        #    unknown：清单里查不到这只票（退市 / 面板还没收进来）⇒ 无法判可比性；
+        #    emptied：清单里有，但**这一整段**都不可比（上市不满一年 / 北交所开市前）。
+        #    混成一条日志时，用户无法判断"是我传错了票"还是"这段历史确实不能用"。
+        if _ug.comparable_since(str(code)) is None:
+            unknown.append(str(code))
+            continue
+        kept, cut = _ug.trim_with_stats(df, code)
+        cut_rows += cut
+        if len(kept) == 0:
+            emptied.append(str(code))
+            continue
+        out[code] = kept
+    if cut_rows:
+        _logger.info("[factor] 宇宙守卫：剪掉 %d 行不可比历史", cut_rows)
+    if emptied:
+        _logger.info("[factor] 宇宙守卫：%d 只整个区间不可比（%s）",
+                     len(emptied), ",".join(emptied[:5]))
+    if unknown:
+        _logger.warning("[factor] 宇宙守卫：%d 只在面板清单里查不到、无法判可比性已剔除"
+                        "（%s）—— 若是退市票属正常，若是新票请先更新面板",
+                        len(unknown), ",".join(unknown[:5]))
+    return out
+
+
 def run(codes, factors=None, start="2024-01-01", end="2025-06-30",
         horizon: int = 20, step: int = 5, groups: int = 5,
-        min_names: int = None, bars_map=None, progress_cb=None) -> AnalysisResult:
+        min_names: int = None, bars_map=None, progress_cb=None,
+        guard: bool = True) -> AnalysisResult:
     """跑一遍因子有效性分析。
 
     Args:
         codes: 股票池
+        guard: 是否套**宇宙守卫**（上市满一年 + 北交所开市后才纳入）。
+            默认 True；研究结论要能复核才关（`BIGA_NO_UNIVERSE_GUARD=1` 也能关）。
+            ⚠️ 关掉得到的 IC 会被"停牌跨段的复牌跳空"污染，**不可用于决策**。
         factors: 要分析的因子键（None = `FACTORS` 全部）
         start/end: 区间
         horizon: 未来收益窗口（交易日）
@@ -308,6 +439,10 @@ def run(codes, factors=None, start="2024-01-01", end="2025-06-30",
 
     if bars_map is None:
         bars_map = load_bars(codes, start, end, progress_cb)
+    # ⚠️ 守卫放在**这里**而不是 `load_bars` 里：注入 `bars_map` 的调用方
+    #    （研究面板缓存复用、脚本批量复跑）走的是另一条路，只改 load_bars 会漏。
+    if guard:
+        bars_map = _guard_bars_map(bars_map)
     res.names = len(bars_map)
     if not bars_map or not factors:
         res.note = "没有可用数据或没有选因子"

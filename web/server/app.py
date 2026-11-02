@@ -16,8 +16,8 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from web.server import settings, warmup
-from web.server.routers import (analysis, chat, desk, intel, meta, picks,
-                                research, review, system, watch)
+from web.server.routers import (analysis, chat, desk, factor_lab, intel, meta,
+                                picks, research, review, system, watch)
 
 _logger = logging.getLogger(__name__)
 
@@ -42,7 +42,7 @@ app = FastAPI(
 # /api/* 必须先注册，StaticFiles 只接剩下的路径
 for _r in (meta.router, picks.router, watch.router, intel.router,
            review.router, desk.router, research.router, analysis.router,
-           system.router, chat.router):
+           factor_lab.router, system.router, chat.router):
     app.include_router(_r)
 
 

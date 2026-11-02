@@ -31,19 +31,35 @@ _SCHEDULER = os.path.join(_ROOT, "core", "scheduler.py")
 PIPELINE_MODES = {"screen", "rule"}
 
 
+def _impl_ast() -> ast.FunctionDef:
+    """分派主体所在函数。
+
+    ⚠️ 2026-11-01：`run_job` 拆成薄包装（model 改走 ContextVar 后，主体搬到
+    `_run_job_impl`）。这组守护要检查的是**分派是否存在**，必须读主体；
+    读包装层会把"包了一层"误判成"19 个 mode 全没接线"（实测踩过）。
+    """
+    with open(_SCHEDULER, encoding="utf-8") as f:
+        tree = ast.parse(f.read())
+    for n in ast.walk(tree):
+        if isinstance(n, ast.FunctionDef) and n.name == "_run_job_impl":
+            return n
+    raise AssertionError("找不到 _run_job_impl（分派检查会变成恒真的空断言）")
+
+
 def _run_job_ast() -> ast.FunctionDef:
+    """薄包装层（只用于"它必须仍转发到 impl"的守护）。"""
     with open(_SCHEDULER, encoding="utf-8") as f:
         tree = ast.parse(f.read())
     for n in ast.walk(tree):
         if isinstance(n, ast.FunctionDef) and n.name == "run_job":
             return n
-    raise AssertionError("找不到 run_job（分派检查会变成恒真的空断言）")
+    raise AssertionError("找不到 run_job（包装层被删了？）")
 
 
 def _dispatched_modes() -> set:
     """`if mode == "xxx":` 里出现过的 mode 字面量。"""
     out = set()
-    for n in ast.walk(_run_job_ast()):
+    for n in ast.walk(_impl_ast()):
         if (isinstance(n, ast.Compare) and isinstance(n.left, ast.Name)
                 and n.left.id == "mode"):
             for c in n.comparators:
@@ -64,7 +80,7 @@ class TestJobDispatch:
     def test_pipeline_fallback_really_exists(self):
         """白名单的前提是"默认分支确实接得住"——否则白名单就是遮羞布。"""
         src = ast.get_source_segment(
-            open(_SCHEDULER, encoding="utf-8").read(), _run_job_ast()) or ""
+            open(_SCHEDULER, encoding="utf-8").read(), _impl_ast()) or ""
         assert "DailyPipeline()" in src, \
             "run_job 里没有 DailyPipeline 默认分支 ⇒ PIPELINE_MODES 白名单不成立"
 
@@ -80,5 +96,16 @@ class TestJobDispatch:
     def test_ai_round_forwards_no_budget(self):
         """`--no-budget` 必须真的传到 run_ai_round_job（否则补跑照样吃额度）。"""
         src = ast.get_source_segment(
-            open(_SCHEDULER, encoding="utf-8").read(), _run_job_ast()) or ""
+            open(_SCHEDULER, encoding="utf-8").read(), _impl_ast()) or ""
         assert "consume_budget=not no_budget" in src
+
+    def test_run_job_forwards_to_impl(self):
+        """`run_job` 必须是薄包装，但**必须**转发到 `_run_job_impl`。
+
+        2026-11-01 踩过：拆包装时这组守护没同步 ⇒ 19 个 mode 被误报"没接线"。
+        这条保证下次再包一层（或改回自己实现）时能立刻看见，而不是让上面几条
+        静默失锚。"""
+        src = ast.get_source_segment(
+            open(_SCHEDULER, encoding="utf-8").read(), _run_job_ast()) or ""
+        assert "_run_job_impl(" in src, \
+            "run_job 没有转发到 _run_job_impl ⇒ 分派守护失去锚点"

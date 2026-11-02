@@ -50,14 +50,26 @@ class TestStageDeps:
         assert "snapshot_flow" in SH.STAGE_DEPS["daily_review"]["deps"]
 
     def test_jobs_order_makes_review_see_fresh_backfill(self):
-        """⭐ D2 的**时刻**判据：回填必须早于复盘（否则依赖登记是空话）。"""
+        """⭐ D2 的**时刻**判据：回填必须早于复盘（否则依赖登记是空话）。
+
+        ⚠️ 2026-11-01：判据从"晚于 15:50"升级为**晚于上游的 P90 结束时刻**。
+        原来写死一个时刻，上游一变慢就又失明了 —— 这正是"复盘读到上一份
+        daily_picks"反复复发的原因（估算 23 分钟，实测 P90 57 分钟）。
+        """
         from core.scheduler import JOBS
+        from core.scheduled_jobs import JOB_MODES
         times = {jid: (kw.get("hour"), kw.get("minute")) for jid, kw, _m, _d in JOBS}
+        modes = {jid: mode for jid, _kw, mode, _d in JOBS}
         bf = times["backfill_screen"]
         rv = times["daily_review"]
         assert bf < rv, f"回填 {bf} 必须早于复盘 {rv}"
-        # 快照 15:40 跑约 9 分钟 ⇒ 复盘必须在 15:50 及之后，否则每天都会判"上游未就绪"
-        assert rv[0] == 15 and rv[1] >= 50, f"复盘 {rv} 仍会与快照重叠（快照约 9 分钟）"
+        rv_min = rv[0] * 60 + rv[1]
+        for up in ("snapshot_flow", "afternoon_full"):
+            h, m = times[up]
+            end = h * 60 + m + JOB_MODES[modes[up]]["minutes"]
+            assert rv_min >= end, (
+                f"复盘 {rv[0]}:{rv[1]:02d} 早于上游 {up} 的 P90 结束 "
+                f"{end // 60}:{end % 60:02d} ⇒ 每天都会读到上一份产物")
 
 
 # ================================================================
@@ -237,14 +249,14 @@ class TestIntegrityMarkdown:
         monkeypatch.setattr(SH, "_review_file", lambda d: "x.md")
         monkeypatch.setattr(SH, "_screen_backfill_rows", lambda d: 7)
 
-        assert SH._job_time("backfill_screen") == "15:10"
+        assert SH._job_time("backfill_screen") == "13:30"
         monkeypatch.setattr(SCH, "JOBS", [
             (jid, {**kw, "hour": 16, "minute": 20} if jid == "backfill_screen" else kw,
              mode, desc)
             for jid, kw, mode, desc in SCH.JOBS])
         md = SH.data_integrity_markdown(DAY)
         assert "16:20" in md, "正文没有跟着 JOBS 变（说明又退回了硬编码）"
-        assert "15:10" not in md
+        assert "13:30" not in md
 
     def test_all_present_says_ok(self, monkeypatch, pipeline_ready):
         monkeypatch.setattr(SH, "_snapshot_rows", lambda d: 2991)
@@ -305,7 +317,15 @@ class TestRunJobWiring:
         src = _io.open(os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
             "core", "scheduler.py"), encoding="utf-8").read()
-        assert "args=[mode, desc, None, False, job_id]" in src, \
+        # ⚠️ 不要锁死整个参数表字面量：2026-10-31 加了 slot 参数，这种断言会
+        #    因为"参数多了"而红，但它真正要守的是**job_id 还在、且前两位是
+        #    (mode, desc)**。改成按参数列表判断，既守住契约又不阻碍演进。
+        import re
+        m = re.search(r"args=\[([^\]]*)\]", src)
+        assert m, "create_scheduler 里找不到 add_job 的 args=[...]"
+        args = [a.strip() for a in m.group(1).split(",")]
+        assert args[:2] == ["mode", "desc"], f"前两个参数必须 (mode, desc)，实际 {args[:2]}"
+        assert "job_id" in args, \
             "create_scheduler 没把 job_id 传给 run_job ⇒ 依赖检查是死代码"
 
 

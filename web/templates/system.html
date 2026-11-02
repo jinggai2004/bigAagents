@@ -124,7 +124,9 @@ a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{ou
     <div class="sect r">密钥与模型</div>
     <div class="g2 r" style="animation-delay:.05s">
       <div class="pn">
-        <div class="ph"><b>厂商接入</b><span id="prov-note">—</span></div>
+        <div class="ph"><b>厂商接入</b><span id="prov-note">—</span>
+          <button class="mini-btn" id="btn-new-prov" style="margin-left:auto">＋ 新增</button>
+        </div>
         <table>
           <thead><tr><th>厂商</th><th>端点</th><th>模型</th><th>状态 / 操作</th></tr></thead>
           <tbody id="prov-body"><tr><td colspan="4" class="empty">读取中…</td></tr></tbody>
@@ -150,10 +152,13 @@ a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{ou
     <div class="sect r">调度与健康</div>
     <div class="g2 r" style="animation-delay:.15s">
       <div class="pn">
-        <div class="ph"><b>定时任务</b><span id="task-note">—</span></div>
+        <div class="ph"><b>定时任务</b><span id="task-note">—</span>
+          <button class="mini-btn" id="btn-new-job" style="margin-left:auto">＋ 新建</button>
+        </div>
         <table>
-          <thead><tr><th>时间</th><th>任务</th><th>今日</th></tr></thead>
-          <tbody id="task-body"><tr><td colspan="3" class="empty">读取中…</td></tr></tbody>
+          <thead><tr><th>时间</th><th>任务</th><th>类型 / 模型</th><th>备注</th>
+            <th>今日</th><th>操作</th></tr></thead>
+          <tbody id="task-body"><tr><td colspan="6" class="empty">读取中…</td></tr></tbody>
         </table>
       </div>
       <div style="display:flex;flex-direction:column;gap:14px">
@@ -237,10 +242,13 @@ a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{ou
 
   // ---------------------------------------------------------------- 任务
   function renderTasks(z) {
-    if (!z.ok) { $('#task-body').innerHTML = '<tr><td colspan="3" class="empty">' + errText(z.error) + '</td></tr>'; return; }
+    if (!z.ok) { $('#task-body').innerHTML = '<tr><td colspan="6" class="empty">' + errText(z.error) + '</td></tr>'; return; }
     const d = z.data;
-    $('#task-note').textContent = d.total + ' 个 · 运行 ' + d.running;
-    if (!d.jobs.length) { $('#task-body').innerHTML = '<tr><td colspan="3" class="empty">无任务定义</td></tr>'; return; }
+    window.__jobs = d.jobs || [];          // 编辑/启停要按 job_id 回查整行
+    $('#task-note').textContent = d.total + ' 个 · 运行 ' + d.running +
+      (d.disabled ? ' · 停用 ' + d.disabled : '');
+    if (!d.jobs.length) { $('#task-body').innerHTML = '<tr><td colspan="6" class="empty">无任务定义</td></tr>'; return; }
+    window.__jobModes = d.modes || [];
     $('#task-body').innerHTML = d.jobs.map(j => {
       let cell;
       const p = j.progress || {};
@@ -256,9 +264,25 @@ a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{ou
       } else {
         cell = '<span class="flat">—</span>';
       }
+      // 停用要在"今日"列先说清楚：一个停用的任务永远显示"—"，
+      // 与"还没到点"长得一样（本项目"缺 vs 未生效"的老问题）。
+      if (!j.enabled) cell = '<span class="chip bad">已停用</span>';
+      const typeCell = esc(j.mode_label || j.mode) +
+        '<span class="flat num" style="display:block;font-size:10px">' +
+        (j.model ? esc(j.model) : '默认模型') + '</span>';
+      const noteCell = j.note ? esc(j.note) : '<span class="flat">—</span>';
+      const ops = '<button class="mini-btn" data-job-op="edit" data-id="' + esc(j.job_id) + '">编辑</button>' +
+        '<button class="mini-btn" data-job-op="toggle" data-id="' + esc(j.job_id) + '">' +
+        (j.enabled ? '停用' : '启用') + '</button>' +
+        (j.can_delete
+          ? '<button class="mini-btn" data-job-op="delete" data-id="' + esc(j.job_id) + '">删除</button>'
+          : '<button class="mini-btn" data-job-op="reset" data-id="' + esc(j.job_id) + '">恢复默认</button>');
       return '<tr><td class="num">' + esc(j.time) + '</td><td>' + esc(j.desc) +
-        '<span class="flat num" style="font-size:10px;margin-left:6px">' + esc(j.mode) + '</span></td>' +
-        '<td>' + cell + '</td></tr>';
+        '<span class="flat num" style="font-size:10px;margin-left:6px">' + esc(j.job_id) + '</span></td>' +
+        '<td>' + typeCell + '</td>' +
+        '<td>' + noteCell + '</td>' +
+        '<td>' + cell + '</td>' +
+        '<td style="white-space:nowrap">' + ops + '</td></tr>';
     }).join('');
   }
 
@@ -325,6 +349,136 @@ a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{ou
     }
   }
 
+  // ---------------------------------------------------------------- 定时任务写操作
+  // 与模型配置同一条纪律：人在页面上点，选择本身就是确认，不套两阶段。
+  async function jobPost(body) {
+    let j;
+    try {
+      const r = await fetch('/api/system/tasks', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body)
+      });
+      j = await r.json();
+    } catch (e) {
+      sysMsg('保存失败：' + (e && e.message ? e.message : '网络错误'), false);
+      return null;
+    }
+    if (j && j.ok) {
+      sysMsg((j.data && j.data.message) || '已保存', true);
+      const cf = (j.data && j.data.conflicts) || [];
+      if (cf.length) {
+        // 冲突只提示不阻断：排期是自由选择，但撞车必须让人看见
+        sysMsg('已保存；注意与 ' + cf.map(c => c.job_id || c).join('、') + ' 时间重叠', true);
+      }
+      loadTasks();
+    } else {
+      const err = (j && j.error) || {};
+      sysMsg(err.detail || err.type || '保存被拒绝', false);
+    }
+    return j;
+  }
+
+  function loadTasks() {
+    get('/api/system/tasks').then(renderTasks);
+  }
+
+  // "15:50" → {hour:15, minute:50}；解析失败返回 null（不猜）
+  function parseHHMM(text) {
+    const m = String(text || '').trim().match(/^(\d{1,2}):(\d{1,2})$/);
+    if (!m) return null;
+    const h = parseInt(m[1], 10), mi = parseInt(m[2], 10);
+    if (h < 0 || h > 23 || mi < 0 || mi > 59) return null;
+    return {hour: h, minute: mi};
+  }
+
+  function currentJob(jobId) {
+    const row = (window.__jobs || []).find(x => x.job_id === jobId);
+    return row || null;
+  }
+
+  function editJob(jobId) {
+    const j = currentJob(jobId);
+    if (!j) { sysMsg('找不到任务 ' + jobId + '，请刷新', false); return; }
+    if (j.kind === 'builtin') {
+      // 内置任务只能改元数据（备注/模型）——排期与执行逻辑在代码里
+      const note = prompt('「' + j.desc + '」的备注（留空=清除）：', j.note || '');
+      if (note === null) return;
+      const model = prompt('该任务使用的模型（留空=跟随默认）：\n可选：' +
+        (window.__allModels || []).join('、'), j.model || '');
+      if (model === null) return;
+      jobPost({action: 'set_builtin', job_id: jobId, note: note, model: model});
+      return;
+    }
+    const name = prompt('任务名称：', j.desc || '');
+    if (name === null || !name.trim()) return;
+    const timeText = prompt('执行时间（HH:MM，交易日开关另设）：', j.time || '');
+    if (timeText === null) return;
+    const cron = parseHHMM(timeText);
+    if (!cron) { sysMsg('时间格式不对，应为 HH:MM（如 15:50）', false); return; }
+    const note = prompt('备注（留空=无）：', j.note || '');
+    if (note === null) return;
+    const model = prompt('使用模型（留空=跟随默认）：\n可选：' +
+      (window.__allModels || []).join('、'), j.model || '');
+    if (model === null) return;
+    jobPost({
+      action: 'save', job_id: jobId, name: name.trim(), mode: j.mode,
+      cron: cron, note: note, model: model,
+      enabled: j.enabled, trading_day_only: j.trading_day_only !== false
+    });
+  }
+
+  function newJob() {
+    const modes = window.__jobModes || [];
+    if (!modes.length) { sysMsg('任务类型清单未加载，请刷新', false); return; }
+    const list = modes.map((m, i) => (i + 1) + '. ' + m.label + '（' + m.mode + '）' +
+      (m.llm ? ' · 调模型' : '')).join('\n');
+    const pick = prompt('新建定时任务 —— 选择类型（填序号）：\n' + list, '1');
+    if (pick === null) return;
+    const idx = parseInt(pick, 10) - 1;
+    if (!(idx >= 0 && idx < modes.length)) { sysMsg('序号无效', false); return; }
+    const mode = modes[idx];
+    const name = prompt('任务名称（会显示在日志与推送里）：', mode.label);
+    if (name === null || !name.trim()) return;
+    const timeText = prompt('执行时间（HH:MM）：', '15:50');
+    if (timeText === null) return;
+    const cron = parseHHMM(timeText);
+    if (!cron) { sysMsg('时间格式不对，应为 HH:MM（如 15:50）', false); return; }
+    const note = prompt('备注（这个任务为什么存在？留空=无）：', '');
+    if (note === null) return;
+    let model = '';
+    if (mode.llm) {
+      model = prompt('使用模型（这个类型会调模型；留空=跟随默认）：\n可选：' +
+        (window.__allModels || []).join('、'), '') || '';
+    }
+    jobPost({
+      action: 'save', name: name.trim(), mode: mode.mode, cron: cron,
+      note: note, model: model, enabled: true
+    });
+  }
+
+  $('#btn-new-job').addEventListener('click', newJob);
+  $('#task-body').addEventListener('click', (e) => {
+    const b = e.target.closest ? e.target.closest('[data-job-op]') : null;
+    if (!b) return;
+    const id = b.dataset.id, op = b.dataset.jobOp;
+    const j = currentJob(id) || {};
+    if (op === 'edit') { editJob(id); return; }
+    if (op === 'toggle') {
+      jobPost({action: 'toggle', job_id: id, enabled: !j.enabled});
+      return;
+    }
+    if (op === 'delete') {
+      if (!confirm('删除任务「' + (j.desc || id) + '」？删除后不可恢复。')) return;
+      jobPost({action: 'delete', job_id: id});
+      return;
+    }
+    if (op === 'reset') {
+      if (!confirm('把「' + (j.desc || id) + '」恢复为代码默认（启用、无备注、跟随默认模型）？')) return;
+      jobPost({action: 'delete', job_id: id});
+    }
+  });
+
   function renderModels(z) {
     if (!z.ok) {
       $('#prov-body').innerHTML = '<tr><td colspan="4" class="empty">' + errText(z.error) + '</td></tr>';
@@ -333,6 +487,8 @@ a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{ou
     }
     const d = z.data;
     ALL_MODELS = d.all_models || [];
+    // 任务编辑弹窗要可选模型清单（与功能下拉同源，不另维护一份）
+    window.__allModels = ALL_MODELS.map(m => m.model);
     $('#prov-note').textContent = d.providers.length + ' 家 · 默认 ' + (d.default_provider || '—');
 
     $('#prov-body').innerHTML = d.providers.map(p => {
@@ -340,7 +496,8 @@ a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{ou
         '<button class="mini-btn" data-act="default" data-id="' + esc(p.id) + '">设为默认</button>') +
         '<button class="mini-btn" data-act="models" data-id="' + esc(p.id) + '">模型清单</button>' +
         '<button class="mini-btn" data-act="toggle" data-id="' + esc(p.id) +
-        '" data-on="' + (p.enabled ? '1' : '0') + '">' + (p.enabled ? '停用' : '启用') + '</button>';
+        '" data-on="' + (p.enabled ? '1' : '0') + '">' + (p.enabled ? '停用' : '启用') + '</button>' +
+        '<button class="mini-btn" data-act="remove" data-id="' + esc(p.id) + '">删除</button>';
       return '<tr><td>' + esc(p.name) + (p.default ? ' <span class="chip ok">默认</span>' : '') + '</td>' +
         '<td class="num" style="font-size:11px">' + esc(p.endpoint) + '</td>' +
         '<td class="num" style="font-size:11px">' + (p.models || []).length + ' 个</td>' +
@@ -389,6 +546,25 @@ a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{ou
     });
   }
 
+  if ($('#btn-new-prov')) {
+    $('#btn-new-prov').addEventListener('click', () => {
+      const id = prompt('厂商 ID（小写字母/数字/下划线/短横线，如 moonshot）：');
+      if (!id || !id.trim()) return;
+      const name = prompt('展示名（如 Moonshot Kimi）：', id.trim());
+      if (name === null) return;
+      const baseUrl = prompt('OpenAI 兼容端点 base_url（如 https://api.moonshot.cn/v1）：');
+      if (!baseUrl || !baseUrl.trim()) return;
+      const keyEnv = prompt('密钥所在的环境变量名（写进 .env）：',
+                            id.trim().toUpperCase().replace(/-/g, '_') + '_API_KEY');
+      if (keyEnv === null) return;
+      const models = prompt('模型清单（逗号分隔，留空可稍后补）：', '');
+      if (models === null) return;
+      sysPost({action: 'provider_add', provider: id.trim(), name: name,
+               base_url: baseUrl.trim(), api_key_env: keyEnv.trim(),
+               models: models});
+    });
+  }
+
   if ($('#prov-body')) {
     $('#prov-body').addEventListener('click', (e) => {
       const b = e.target.closest ? e.target.closest('.mini-btn') : null;
@@ -406,6 +582,10 @@ a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{ou
         const list = v.split(',').map(s => s.trim()).filter(Boolean);
         if (!list.length) { sysMsg('至少要保留一个模型', false); return; }
         sysPost({action: 'provider_models', provider: id, models: list});
+      } else if (act === 'remove') {
+        if (!confirm('删除厂商「' + id + '」？\n（模型清单与密钥环境变量名的绑定会一起移除，' +
+                     '指向它的功能会回到"跟随默认"）')) return;
+        sysPost({action: 'provider_remove', provider: id});
       }
     });
   }
@@ -470,7 +650,17 @@ a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{ou
     }
     const lab = (s.by_labeler || []).map(x =>
       esc(x.labeler || '—') + ' ' + x.n).join(' · ');
-    $('#sent-note').textContent = s.total + ' 条 · ' + (s.by_labeler || []).length + ' 个标注器';
+    // 断档必须写在标题上：只列每日条数时，一张 8 天没动的表看起来和"今天没数据"一样。
+    // 判据用后端给的 stale_days（>3 天标红；周末两天不算异常）。
+    if (s.stale_alert) {
+      $('#sent-note').innerHTML = '<span style="color:var(--rd)">⚠ 最后标注 ' +
+        esc(s.last_date || '—') + '，已 ' + s.stale_days + ' 天无新增</span>' +
+        ' · ' + s.total + ' 条';
+    } else {
+      $('#sent-note').textContent = s.total + ' 条 · ' +
+        (s.by_labeler || []).length + ' 个标注器' +
+        (s.last_date ? ' · 最后 ' + s.last_date : '');
+    }
     $('#sent-body').innerHTML =
       (s.per_day || []).map(r =>
         '<div class="li"><span class="k num">' + esc(r.date || '') + '</span>' +

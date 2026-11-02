@@ -903,7 +903,11 @@ class TestMarketSignalDualFormat:
     @pytest.fixture
     def _fake_latest(self, tmp_path, monkeypatch):
         import core.ai_daily_round as R
-        monkeypatch.setattr(R, "__file__", str(tmp_path / "core" / "x.py"))
+        from config import paths as _paths
+        # ⚠️ 2026-10-30 起路径改走 `config.paths.data_root()`（frozen 下 `__file__`
+        #    在只读 `_internal/` 里，永远找不到产物 —— 16:40 联赛轮实测踩中）。
+        #    这里 patch 的是**数据根**，与写入方 `core/pipeline.OUTPUT_DIR` 同口径。
+        monkeypatch.setattr(_paths, "data_root", lambda: str(tmp_path))
         d = tmp_path / "output" / "daily_picks"
         d.mkdir(parents=True)
 

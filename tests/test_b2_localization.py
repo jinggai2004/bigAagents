@@ -307,7 +307,11 @@ class TestLimitCalendar:
         ).to_parquet(zt_env / "daily_part_0001.parquet", index=False)
         r1 = ZC.limit_up_stats()
         assert r1["available"] is True
-        assert os.path.exists(ZC._CACHE_PATH), "首次构建必须落盘缓存"
+        # 2026-11-01：缓存改为按 `days` 分文件（`_cache_path(days)`）。
+        # 断言用派生路径，同时守住"不同窗口不共用同一份缓存"这个修复点。
+        assert os.path.exists(ZC._cache_path(40)), "首次构建必须落盘缓存"
+        assert ZC._cache_path(40) != ZC._cache_path(400), \
+            "不同 days 必须落在不同缓存文件（否则先读 40 天再读 400 天会拿到 40 天切片）"
         # 清空 parts ⇒ 只能靠缓存
         for f in zt_env.iterdir():
             f.unlink()

@@ -69,6 +69,20 @@ label{font-size:11px;color:var(--tx3);font-family:var(--mono);letter-spacing:.04
 .mini{height:4px;width:56px;background:var(--sf3);border-radius:2px;overflow:hidden;display:inline-block;vertical-align:middle}
 .mini i{display:block;height:100%;background:var(--cy)}
 .mini i.dim{background:var(--tx3)}
+/* 因子小格（2026-11-01）：六个因子一次看全。此前结果表只列「主力资金」「趋势」两列，
+   PE/均线/波动率/新闻四个因子在页面上完全不可见 —— 而它们各占 15~17% 权重。 */
+.fchips{display:flex;gap:3px;flex-wrap:wrap}
+.fchip{display:inline-grid;place-items:center;min-width:22px;height:18px;padding:0 4px;
+  border-radius:4px;font-size:10px;font-family:var(--mono);font-variant-numeric:tabular-nums;
+  border:1px solid var(--line2);color:var(--tx2);background:var(--sf2);cursor:help}
+.fchip.hi{background:rgba(45,212,191,.15);color:var(--cy);border-color:rgba(45,212,191,.35)}
+.fchip.mid{background:rgba(245,158,11,.13);color:var(--am);border-color:rgba(245,158,11,.32)}
+.fchip.lo{background:rgba(244,63,94,.12);color:var(--rd);border-color:rgba(244,63,94,.3)}
+.fchip.un{color:var(--tx3);border-style:dashed}
+.detail-tr>td{background:var(--sf2);padding:10px 18px 14px}
+.detail-tr table{margin-top:6px}
+.detail-tr th,.detail-tr td{font-size:11px;padding:4px 10px}
+.detail-tr .meta{font-size:11px;color:var(--tx3);font-family:var(--mono);margin-bottom:4px}
 .bar{height:4px;background:var(--sf3);border-radius:2px;overflow:hidden;margin-top:8px}
 .bar i{display:block;height:100%;background:var(--cy);transition:width .3s}
 .ft{font-size:10px;color:var(--tx3);font-family:var(--mono);letter-spacing:.05em;padding:2px 4px}
@@ -136,9 +150,56 @@ a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{ou
     <div class="pn r" style="animation-delay:.1s">
       <div class="ph"><b>结果</b><span id="res-note">—</span></div>
       <table>
-        <thead><tr><th>代码</th><th>名称</th><th>策略</th><th>评分</th><th>主力资金</th><th>趋势</th><th>覆盖</th><th></th></tr></thead>
+        <thead><tr><th>代码</th><th>名称</th><th>策略</th><th>评分</th>
+          <th>因子（6 项）</th><th>覆盖</th><th></th><th></th></tr></thead>
         <tbody id="res-body"><tr><td colspan="8" class="empty">尚无结果</td></tr></tbody>
       </table>
+      <!-- 门槛执行明细（2026-10-30）：拥挤度闸门与流动性下限**是否生效**必须看得见。
+           不显示的话，"今天没有拥挤的票"与"闸门根本没跑"在页面上完全无法区分
+           —— 这两个门槛都是减法，生效与否只表现为"候选少了几只"，看不出来。 -->
+      <!-- 候选池排名（2026-11-01）：默认折叠，是"为什么是这 5 只"的证据 -->
+      <div id="res-ranked" style="padding:0 18px 4px"></div>
+      <div id="res-gate" style="padding:8px 18px 12px;font-size:11.5px;color:var(--tx2);line-height:1.7"></div>
+    </div>
+
+    <!-- ===== 因子实验室（2026-11-01）=====
+         为什么放在选股页而不是"系统"页：它是**选股的一部分**——用户写因子、
+         回测、决定要不要当闸门，全是为了这页上面那份名单。放系统页会让人以为
+         是运维配置。 -->
+    <div class="pn r" id="lab-panel" style="animation-delay:.2s;margin-top:14px">
+      <div class="ph"><b>因子实验室</b><span id="lab-note">读取中…</span></div>
+      <div class="pb">
+        <div style="font-size:11.5px;color:var(--tx2);line-height:1.7;margin-bottom:10px">
+          用一行表达式定义因子，回测过后才能用。字段见下方清单（括号里是真实覆盖率，
+          <b>空列已标灰</b>）。可用函数：<code>abs log log1p log10 sqrt sign exp
+          minimum maximum clip cs_rank cs_z</code>；比较与 <code>and/or</code> 会转成 0/1。
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+          <div style="flex:1;min-width:180px"><label>名称</label>
+            <input id="lab-name" placeholder="例：量价背离比" style="width:100%"></div>
+          <div style="flex:2;min-width:240px"><label>表达式</label>
+            <input id="lab-expr" placeholder="例：amihud20 / lndvol20" style="width:100%"></div>
+          <div style="width:110px"><label>闸门剔除</label>
+            <select id="lab-pct">
+              <option value="0.05">5%</option><option value="0.1" selected>10%</option>
+              <option value="0.2">20%</option><option value="0.3">30%</option>
+            </select></div>
+          <button class="btn p" id="lab-run">回测</button>
+          <button class="btn" id="lab-save">保存</button>
+        </div>
+        <div id="lab-valid" style="font-size:11.5px;margin-top:8px;min-height:16px"></div>
+        <div id="lab-result"></div>
+        <details style="margin-top:10px">
+          <summary style="cursor:pointer;font-size:11.5px;color:var(--tx2)">字段清单</summary>
+          <div id="lab-fields" style="font-size:11px;color:var(--tx2);line-height:1.9;margin-top:8px"></div>
+        </details>
+        <div class="ph" style="margin-top:14px"><b>我的因子</b><span id="lab-count">—</span></div>
+        <table>
+          <thead><tr><th>名称</th><th>表达式</th><th>IC</th><th>t</th><th>分年</th>
+            <th>状态</th><th>操作</th></tr></thead>
+          <tbody id="lab-list"><tr><td colspan="7" class="empty">读取中…</td></tr></tbody>
+        </table>
+      </div>
     </div>
     <div class="ft" id="ft">连接 API 中…</div>
   </div>
@@ -231,37 +292,189 @@ a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{ou
       num(f.score) + '/' + num(f.max) + '</span>';
   }
 
+  // ---------------------------------------------------------------- 因子明细
+  // 六个因子在 `core/sector.FACTOR_WEIGHTS` 里各占 11.8%~23.5% 权重。
+  // 此前表格只展示「主力资金」「趋势」两列 ⇒ 另外四个（PE/均线/波动率/新闻）
+  // 在页面上完全不可见，用户只能看到总分，无法判断"这一分是从哪来的"。
+  const FACTOR_ORDER = ['主力资金', 'PE估值', '趋势', '均线排列', '波动率', '新闻正面率'];
+
+  function factorChips(f, factorWeights) {
+    f = f || {};
+    return '<span class="fchips">' + FACTOR_ORDER.map(k => {
+      const v = f[k];
+      if (!v) {
+        return '<i class="fchip un" title="' + esc(k) + '：本次未评分">—</i>';
+      }
+      if (v.status !== 'ok' || v.score == null) {
+        // 缺数据要**说出来为什么**（不可评 vs 0 分是两件事，这是本项目的铁律）
+        const why = v.detail || v.status || '不可评';
+        return '<i class="fchip un" title="' + esc(k + '：' + why) + '">缺</i>';
+      }
+      const r = v.max ? v.score / v.max : 0;
+      const cls = r >= 0.8 ? 'hi' : (r >= 0.5 ? 'mid' : 'lo');
+      const w = v.weight != null ? '（权重 ' + (v.weight * 100).toFixed(1) + '%）' : '';
+      const tip = k + ' ' + num(v.score) + '/' + num(v.max) + w + ' · ' + (v.detail || '');
+      return '<i class="fchip ' + cls + '" title="' + esc(tip) + '">' + num(v.score) + '</i>';
+    }).join('') + '</span>';
+  }
+
+  function factorDetailRow(p) {
+    const f = p.factors || {};
+    const rows = FACTOR_ORDER.map(k => {
+      const v = f[k] || {};
+      const ok = v.status === 'ok' && v.score != null;
+      return '<tr><td>' + esc(k) + '</td>' +
+        '<td class="num">' + (ok ? num(v.score) + ' / ' + num(v.max) : '—') + '</td>' +
+        '<td class="num flat">' + (v.weight != null ? (v.weight * 100).toFixed(1) + '%' : '—') + '</td>' +
+        '<td>' + (ok ? '<span class="chip ok">已评</span>'
+                     : '<span class="chip warn">' + esc(v.status || '未评') + '</span>') + '</td>' +
+        '<td style="color:var(--tx2)">' + esc(v.detail || '') + '</td></tr>';
+    }).join('');
+    // 作用域/口径：分位到底是"行业内"还是"池内"、波动率用的是 ivol 还是总波动、
+    // PE 来自东财还是本地快照 —— 这三个决定"分数能不能横向比"，必须写在明面上。
+    const vol = f['波动率'] || {};
+    const vv = vol.value || {};
+    const pe = f['PE估值'] || {};
+    const meta = [
+      'PE 来源：' + (pe.pe_source === 'snapshot_sina' ? '本地快照·新浪口径'
+                     : (p.pe_source === 'snapshot_sina' ? '本地快照·新浪口径' : '东财实时')),
+      '波动率口径：' + (vv.vol_basis === 'ivol' ? '残差波动(IVOL)' : (vv.vol_basis || '—')),
+      '分位作用域：' + (vv.pct_scope === 'industry' ? '行业内'
+                        : vv.pct_scope === 'pool' ? '候选池内'
+                        : vv.pct_scope === 'mixed' ? '行业/池内混合' : '—'),
+      '覆盖：' + (p.score_coverage == null ? '—' : (p.score_coverage * 100).toFixed(0) + '%'),
+    ].join('　·　');
+    return '<tr class="detail-tr"><td colspan="8">' +
+      '<div class="meta">' + esc(meta) + '</div>' +
+      '<table><thead><tr><th>因子</th><th>得分</th><th>权重</th><th>状态</th><th>依据</th></tr></thead>' +
+      '<tbody>' + rows + '</tbody></table>' +
+      (p.score_status && p.score_status !== 'ok'
+        ? '<div class="meta" style="margin-top:6px;color:var(--am)">评分状态：' + esc(p.score_status) + '</div>' : '') +
+      '</td></tr>';
+  }
+
   function renderResult(z) {
     if (!z.ok) return;
     const r = z.data.result;
     if (!r) { return; }
-    const date = r.date || r.trade_date || '';
-    const rows = r.picks || r.ranked || r.candidates || [];
+    // 日期/模式兜底（2026-11-01）：`/api/tasks/*?result=1` 的 result 不带 date/mode，
+    // 直接拼接会渲染出「· 84 只」这种前面空一截的标题（实测抓到）。
+    const date = r.date || r.trade_date || ($('#p-date') ? ($('#p-date').textContent || '').replace(/^数据\s*/, '').trim() : '');
+    const picks = r.picks || [];
+    const ranked = r.ranked || [];
+    // 入选名单 vs 候选纯排序：两者语义不同（入选做过行业分散，ranked 是纯分数全排）。
+    // 只有 ranked 时**不能谎称"入选 N 只"** —— 那是候选池，多出来的都没被选中。
+    const usingRanked = !picks.length && ranked.length > 0;
+    const rows = picks.length ? picks : ranked;
+    const kindTxt = usingRanked ? ('候选池排名 ' + rows.length + ' 只（未出正式名单）')
+                                : ('入选 ' + rows.length + ' 只');
     $('#res-note').textContent = (date ? date + ' · ' : '') +
-      (r.mode === 'rule' ? '规则选股' : (r.mode || '')) + ' · ' + rows.length + ' 只' +
+      (r.mode === 'rule' ? '规则选股' : (r.mode || '')) + ' · ' + kindTxt +
+      (ranked.length > picks.length && picks.length ? ' · 候选池 ' + ranked.length + ' 只' : '') +
       (r.elapsed_seconds ? ' · ' + r.elapsed_seconds + 's' : '');
     if (!rows.length) {
       const why = r.skipped ? (r.skip_reason || '市况不佳，跳过') : '无候选';
       $('#res-body').innerHTML = '<tr><td colspan="8" class="empty">' + esc(why) + '</td></tr>';
       return;
     }
-    $('#res-body').innerHTML = rows.map(p => {
+    $('#res-body').innerHTML = rows.map((p, i) => pickRowHtml(p, 'm' + i)).join('');
+    // 标记"主表已填"：poll 靠它判断要不要用任务结果覆盖（见 poll 的注释）
+    $('#res-body').dataset.filled = '1';
+    renderRanked(picks, ranked, r);
+    if (r.market_signal) renderSignal(r.market_signal);
+    else if (r.signal) renderSignal(r.signal);
+    renderStages(r.stage_timings);
+    renderGate(r.screen_meta);
+  }
+
+  // 单行渲染（主表与候选池共用；key 唯一，明细行靠它开关）
+  function pickRowHtml(p, key) {
       const f = p.factors || {};
       const cov = p.score_coverage;
-      return '<tr><td class="num">' + esc(p['股票代码'] || p.code) + '</td>' +
+      var html = '<tr data-idx="' + esc(key) + '"><td class="num">' + esc(p['股票代码'] || p.code) + '</td>' +
         '<td>' + esc(p['股票名称'] || p.name) + '</td>' +
         '<td>' + esc(p['策略'] || p.strategy || '') + '</td>' +
         '<td class="num ' + (p.score == null ? 'flat' : 'up') + '">' +
         (p.score == null ? '不可评' : num(p.score, 1)) + '</td>' +
-        '<td>' + factorBar(f['主力资金']) + '</td>' +
-        '<td>' + factorBar(f['趋势']) + '</td>' +
-        '<td class="num flat">' + (cov == null ? '—' : (cov * 100).toFixed(0) + '%') + '</td>' +
+        '<td>' + factorChips(f) + '</td>' +
+        '<td class="num ' + (cov != null && cov < 1 ? 'flat' : '') + '">' +
+        (cov == null ? '—' : (cov * 100).toFixed(0) + '%') + '</td>' +
+        '<td><button class="btn" style="padding:2px 8px;font-size:11px" data-detail="' + esc(key) + '">明细</button></td>' +
         '<td><a class="btn" style="padding:2px 10px;font-size:11px" href="analysis.html?code=' +
         esc(p['股票代码'] || p.code) + '">分析</a></td></tr>';
-    }).join('');
-    if (r.market_signal) renderSignal(r.market_signal);
-    else if (r.signal) renderSignal(r.signal);
-    renderStages(r.stage_timings);
+      // 明细行默认隐藏（点击「明细」展开）；初始渲染就写好，切换只是 display
+      html += factorDetailRow(p).replace('class="detail-tr"', 'class="detail-tr" style="display:none" data-detail-row="' + esc(key) + '"');
+      return html;
+  }
+
+  // 候选池排名（2026-11-01）：入选名单做过行业分散，ranked 是**纯分数全排**。
+  // 用户要看"为什么是这 5 只、第 6 名差多少"，必须能看到池子本身；
+  // 但默认折叠 —— 它不是结论，是证据。
+  function renderRanked(picks, ranked, r) {
+    const box = $('#res-ranked');
+    if (!box) return;
+    if (!picks.length || ranked.length <= picks.length) { box.innerHTML = ''; return; }
+    box.innerHTML =
+      '<div class="ph" style="margin-top:12px"><b>候选池排名（' + ranked.length + ' 只）</b>' +
+      '<span>纯分数排序 · 未做行业分散</span>' +
+      '<button class="mini-btn" id="btn-pool" style="margin-left:auto">展开</button></div>' +
+      '<div id="pool-wrap" style="display:none"><table>' +
+      '<thead><tr><th>#</th><th>代码</th><th>名称</th><th>评分</th><th>因子（6 项）</th>' +
+      '<th>覆盖</th><th></th><th></th></tr></thead><tbody>' +
+      ranked.map((p, i) => pickRowHtml(p, 'r' + i).replace('<tr data-idx',
+        '<tr data-rank="' + (i + 1) + '" data-idx')).join('') +
+      '</tbody></table></div>';
+  }
+  // 明细展开/收起（事件委托：结果表会整体重渲染，逐行绑事件会丢）
+  function toggleDetail(key, btn) {
+    const row = document.querySelector('[data-detail-row="' + key + '"]');
+    if (!row) return;
+    const open = row.style.display !== 'none';
+    row.style.display = open ? 'none' : '';
+    if (btn) btn.textContent = open ? '明细' : '收起';
+  }
+  if ($('#res-body')) {
+    $('#res-body').addEventListener('click', (e) => {
+      const b = e.target.closest ? e.target.closest('[data-detail]') : null;
+      if (b) toggleDetail(b.dataset.detail, b);
+    });
+  }
+  // 候选池折叠区在 #res-ranked 内（每次 renderResult 重建），同样用委托
+  if ($('#res-ranked')) {
+    $('#res-ranked').addEventListener('click', (e) => {
+      const t = e.target;
+      if (t && t.id === 'btn-pool') {
+        const wrap = $('#pool-wrap');
+        if (!wrap) return;
+        const open = wrap.style.display !== 'none';
+        wrap.style.display = open ? 'none' : '';
+        t.textContent = open ? '展开' : '收起';
+        return;
+      }
+      const b = t && t.closest ? t.closest('[data-detail]') : null;
+      if (b) toggleDetail(b.dataset.detail, b);
+    });
+  }
+
+  // 门槛执行明细：**生效要说，没生效更要说**（note 里就写着原因）
+  function renderGate(meta) {
+    const box = $('#res-gate');
+    if (!box) return;
+    const sm = meta || {};
+    const line = (m, label) => {
+      if (!m || !Object.keys(m).length) return esc(label) + '：无执行记录';
+      if (m.applied) {
+        // 生效时只说"剔了几只 + 数据日"：note 里把同一句话又写了一遍，
+        // 两段并排会把真正需要读的"未生效原因"挤到看不见。
+        return esc(label) + '：剔除 ' + (m.dropped || []).length + ' 只' +
+          (m.date ? '（数据日 ' + esc(m.date) + '）' : '');
+      }
+      return esc(label) + '：<b style="color:var(--am)">未生效</b>' +
+        (m.note ? ' · ' + esc(m.note) : '');
+    };
+    box.innerHTML = '<div>' + line(sm.crowding_gate, '拥挤度闸门') + '</div>' +
+      '<div>' + line(sm.quality_gate, '盈利质量闸门') + '</div>' +
+      '<div>' + line(sm.liquidity_floor, '流动性下限') + '</div>';
   }
 
   function renderStages(t) {
@@ -277,11 +490,26 @@ a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{ou
   function poll() {
     return get('/api/tasks/' + TASK + '?result=1').then(z => {
       renderTask(z);
-      if (z.ok && z.data.result) renderResult(z);
-      else if (z.ok && !z.data.running) {
+      const res = (z.data || {}).result;
+      if (z.ok && res) {
+        const body = $('#res-body');
+        const filled = body && body.dataset.filled === '1';
+        if (!filled) { renderResult(z); return z; }
+        // ⚠️ 主表已有**正式名单**（`latest.json` 的 picks）时不能整体覆盖：
+        //    任务结果的 `picks` 常常为空、只有 `ranked`（候选池纯排序 84 只），
+        //    覆盖后标题会变成"入选 84 只"（实测抓到），把候选池伪装成结论。
+        //    正确做法是只补候选池那一段。
+        const p = res.picks || [], rk = res.ranked || [];
+        if (rk.length && !p.length) {
+          const n = body.querySelectorAll(':scope > tr:not(.detail-tr)').length || 0;
+          renderRanked(new Array(n), rk);
+        }
+        return z;
+      }
+      if (z.ok && !z.data.running) {
         // 没有结果但任务状态是 done ⇒ 空壳（选股跳过/落盘失败），必须说出来
         const st = (z.data.progress || {}).status;
-        if (st === 'done') $('#res-body').innerHTML =
+        if (st === 'done' && !($('#res-body').dataset.filled === '1')) $('#res-body').innerHTML =
           '<tr><td colspan="8" class="empty">本次未产出候选（已完成，结果文件缺失）</td></tr>';
       }
       return z;
@@ -334,6 +562,237 @@ a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{ou
   });
 
   // ---------------------------------------------------------------- 启动
+  // ================================================================ 因子实验室
+  // 口径全部在 core/factor_lab.py；这里只负责展示与转发。
+  // ⚠️ 页面**不允许**手工改状态到 applied：core 的 set_status 会拦（没过检验的
+  //    因子不许应用）。页面若自己判断一遍，两边判据就会分叉。
+  const labState = { loaded: false, catalog: [], factors: [], form: {} };
+
+  function labPost(action, payload) {
+    return fetch('/api/factors', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(Object.assign({action: action}, payload || {})),
+    }).then(r => r.json());
+  }
+
+  function renderLabFields(cat) {
+    const byGroup = {};
+    (cat || []).forEach(f => { (byGroup[f.group] = byGroup[f.group] || []).push(f); });
+    // `available=null` = 财务字段还没加载（不是"不可用"）：灰字但**不划掉**。
+    // 划掉会把"没算"说成"没有"，用户就会去换字段，白折腾。
+    const style = (f) => f.available === false
+      ? 'color:var(--tx3);text-decoration:line-through'
+      : (f.available === null ? 'color:var(--tx3)' : 'color:var(--cy)');
+    const pct = (f) => f.coverage == null ? '待回测' : Math.round(f.coverage * 100) + '%';
+    $('#lab-fields').innerHTML = Object.entries(byGroup).map(([g, arr]) =>
+      '<div style="margin-bottom:6px"><b>' + esc(g) + '</b>：' + arr.map(f =>
+        '<span data-field="' + esc(f.name) + '" title="' + esc(f.label) +
+        ' 覆盖率 ' + esc(pct(f)) + '" ' +
+        'style="cursor:pointer;margin-right:8px;' + style(f) + '">' +
+        esc(f.name) + '(' + esc(pct(f)) + ')</span>').join('') +
+      '</div>').join('');
+  }
+
+  function renderLabMetrics(m) {
+    if (!m || !m.ok) {
+      $('#lab-result').innerHTML = '<div class="empty" style="margin-top:10px">' +
+        esc((m && (m.reason || m.verdict)) || '无结果') + '</div>';
+      return;
+    }
+    const chip = (label, val, tone) => '<span class="chip ' + (tone || '') + '">' +
+      esc(label) + ' ' + esc(val) + '</span>';
+    const yc = m.year_consistency || {};
+    const red = (m.redundancy || {}).top || [];
+    const rows = [
+      chip('IC', (m.ic_mean > 0 ? '+' : '') + num(m.ic_mean, 4),
+           m.ic_mean > 0 ? 'ok' : 'warn'),
+      chip('t', (m.t_stat > 0 ? '+' : '') + num(m.t_stat, 2), Math.abs(m.t_stat) >= 2 ? 'ok' : 'bad'),
+      chip('ICIR', num(m.ic_ir, 2)),
+      chip('月数', num(m.n_months)),
+      chip('Q5−Q1', num(m.q5_q1_spread, 4)),
+      chip('覆盖', Math.round((m.coverage || 0) * 100) + '%',
+           (m.coverage || 0) >= 0.6 ? 'ok' : 'bad'),
+      chip('试验数', num(m.n_trials), 'warn'),
+      chip('DSR', m.dsr && m.dsr.significant ? '通过 p=' + num(m.dsr.p_value, 3) : '未过',
+           m.dsr && m.dsr.significant ? 'ok' : 'bad'),
+      chip('分年', (yc.same_sign ?? '—') + '/' + (yc.years ?? '—'),
+           yc.consistent ? 'ok' : 'bad'),
+      chip('方向', m.direction_label || '—'),
+    ].join(' ');
+    const years = Object.entries(m.by_year || {}).map(([y, v]) =>
+      '<span class="num" style="margin-right:10px">' + esc(y) + ' ' +
+      (v > 0 ? '+' : '') + num(v, 3) + '</span>').join('');
+    const redText = red.length ? red.map(x =>
+      '<span class="num" style="margin-right:10px">' + esc(x.factor) + ' ' +
+      (x.rho > 0 ? '+' : '') + num(x.rho, 2) + (x.own ? '(自身输入)' : '') + '</span>').join('') : '—';
+    $('#lab-result').innerHTML =
+      '<div style="margin-top:10px;line-height:2">' + rows + '</div>' +
+      '<div style="font-size:11px;color:var(--tx2);margin-top:6px">分年 IC：' + (years || '—') + '</div>' +
+      '<div style="font-size:11px;color:var(--tx2)">最相关：' + redText + '</div>' +
+      (m.blockers && m.blockers.length
+        ? '<div style="font-size:11.5px;color:var(--bad,#e05656);margin-top:6px">不可用：' +
+          m.blockers.map(esc).join('；') + '</div>'
+        : '<div style="font-size:11.5px;color:var(--cy);margin-top:6px">' +
+          '✓ 通过全部检验，可保存并启用为闸门</div>') +
+      '<div style="font-size:11px;color:var(--tx3);margin-top:4px">' +
+      esc(m.ran_at || '') + ' · 耗时 ' + num(m.elapsed_ms) + 'ms</div>';
+  }
+
+  function renderLabList(factors) {
+    $('#lab-count').textContent = factors.length + ' 个 · 生效 ' +
+      factors.filter(f => f.status === 'applied').length;
+    if (!factors.length) {
+      $('#lab-list').innerHTML = '<tr><td colspan="7" class="empty">还没有自定义因子</td></tr>';
+      return;
+    }
+    const badge = (s) => {
+      const map = {applied: ['ok', '生效中'], validated: ['', '已通过'],
+                   rejected: ['bad', '未通过'], disabled: ['', '已停用'], draft: ['', '草稿']};
+      const [tone, label] = map[s] || ['', s];
+      return '<span class="chip ' + tone + '">' + esc(label) + '</span>';
+    };
+    $('#lab-list').innerHTML = factors.map(f => {
+      const m = f.metrics || {};
+      const yc = m.year_consistency || {};
+      const can = f.status === 'validated' || f.status === 'applied' || f.status === 'disabled';
+      const btn = (act, label, status) =>
+        '<button class="mini-btn" data-lab="' + act + '" data-id="' + esc(f.factor_id) +
+        '"' + (status ? ' data-status="' + status + '"' : '') + '>' + label + '</button>';
+      const acts = (f.status === 'applied'
+        ? btn('status', '停用', 'disabled')
+        : (can ? btn('status', '应用', 'applied') : '<span class="flat" style="font-size:11px">未过检验</span>')) +
+        ' ' + btn('delete', '删除');
+      return '<tr><td>' + esc(f.name) + '</td>' +
+        '<td class="num" style="font-size:11px">' + esc(f.expr) + '</td>' +
+        '<td class="num">' + (m.ic_mean == null ? '—' : (m.ic_mean > 0 ? '+' : '') + num(m.ic_mean, 3)) + '</td>' +
+        '<td class="num">' + (m.t_stat == null ? '—' : num(m.t_stat, 1)) + '</td>' +
+        '<td class="num">' + (yc.same_sign == null ? '—' : yc.same_sign + '/' + yc.years) + '</td>' +
+        '<td>' + badge(f.status) + '</td><td>' + acts + '</td></tr>';
+    }).join('');
+  }
+
+  function loadLab() {
+    return get('/api/factors').then(z => {
+      if (!z.ok) {
+        $('#lab-note').textContent = errText(z.error);
+        $('#lab-list').innerHTML = '<tr><td colspan="7" class="empty">' + errText(z.error) + '</td></tr>';
+        return;
+      }
+      const d = z.data;
+      labState.loaded = true;
+      labState.catalog = d.catalog || [];
+      labState.factors = d.factors || [];
+      // 面板可能还没构建（首屏刻意不建：财务档要读 5,582 个 parquet，21.5 秒）。
+      // 如实说"待构建"，别拿 0 或"—"糊过去。
+      $('#lab-note').textContent = d.panel
+        ? d.panel.months + ' 个月 · ' + d.panel.start + '~' + d.panel.end +
+          ' · 中位 ' + d.panel.coverage_median + ' 只/月' +
+          (d.fin_ready ? ' · 含财务' : ' · 仅量价（财务字段首次回测时加载）')
+        : '面板待构建（首次回测约 30 秒，之后有缓存）';
+      renderLabFields(labState.catalog);
+      renderLabList(labState.factors);
+      const notes = [];
+      if ((d.empty_fields || []).length) {
+        notes.push('空列（面板里几乎没数据，用不了）：' + d.empty_fields.join(', '));
+      }
+      if ((d.pending_fields || []).length) {
+        notes.push('待加载（财务字段，写含有它们的因子并回测一次后才有覆盖率）：' +
+          d.pending_fields.join(', '));
+      }
+      if (notes.length) {
+        $('#lab-fields').insertAdjacentHTML('afterbegin',
+          '<div style="color:var(--tx3);margin-bottom:6px">' + notes.map(esc).join('<br>') + '</div>');
+      }
+    }).catch(() => { $('#lab-note').textContent = 'API 不可达'; });
+  }
+
+  // 输入即校验：不跑数据，秒回，避免"点了回测等半分钟才被告知字段名拼错"
+  let labTimer = null;
+  if ($('#lab-expr')) {
+    $('#lab-expr').addEventListener('input', () => {
+      clearTimeout(labTimer);
+      labTimer = setTimeout(() => {
+        const e = $('#lab-expr').value.trim();
+        if (!e) { $('#lab-valid').innerHTML = ''; return; }
+        labPost('validate', {expr: e}).then(z => {
+          if (!z.ok) return;
+          const d = z.data;
+          $('#lab-valid').innerHTML = d.valid
+            ? '<span style="color:var(--cy)">✓ 字段：' +
+              d.fields.map(f => esc(f.name) + '(' + esc(f.group) + ')').join(', ') +
+              (d.funcs.length ? ' · 函数：' + d.funcs.map(esc).join(', ') : '') + '</span>'
+            : '<span style="color:var(--bad,#e05656)">✗ ' + esc(d.error) + '</span>';
+        });
+      }, 400);
+    });
+    // 点字段名插到表达式末尾（省得记名字，也少一半拼写错误）
+    $('#lab-fields').addEventListener('click', (ev) => {
+      const s = ev.target.closest ? ev.target.closest('[data-field]') : null;
+      if (!s) return;
+      const box = $('#lab-expr');
+      box.value = (box.value.trim() ? box.value.trim() + ' + ' : '') + s.dataset.field;
+      box.dispatchEvent(new Event('input'));
+      box.focus();
+    });
+  }
+
+  if ($('#lab-run')) {
+    $('#lab-run').addEventListener('click', () => {
+      const expr = ($('#lab-expr').value || '').trim();
+      if (!expr) { $('#lab-valid').innerHTML = '<span style="color:var(--bad,#e05656)">先写表达式</span>'; return; }
+      const btn = $('#lab-run');
+      btn.disabled = true;
+      $('#lab-result').innerHTML = '<div class="empty" style="margin-top:10px">回测中（首次约 1 分钟，要加载面板）…</div>';
+      labPost('backtest', {expr: expr, name: ($('#lab-name').value || '临时因子').trim()})
+        .then(z => {
+          if (!z.ok) { $('#lab-result').innerHTML = '<div class="empty">' + errText(z.error) + '</div>'; return; }
+          labState.form.metrics = z.data;
+          labState.form.expr = expr;
+          renderLabMetrics(z.data);
+        })
+        .catch(() => { $('#lab-result').innerHTML = '<div class="empty">请求失败</div>'; })
+        .finally(() => { btn.disabled = false; });
+    });
+
+    $('#lab-save').addEventListener('click', () => {
+      const expr = ($('#lab-expr').value || '').trim();
+      const name = ($('#lab-name').value || '').trim();
+      if (!expr || !name) {
+        $('#lab-valid').innerHTML = '<span style="color:var(--bad,#e05656)">名称和表达式都要填</span>';
+        return;
+      }
+      const btn = $('#lab-save');
+      btn.disabled = true;
+      labPost('save', {expr: expr, name: name, kind: 'gate',
+                       gate_pct: Number($('#lab-pct').value || 0.1)})
+        .then(z => {
+          if (!z.ok) { $('#lab-result').insertAdjacentHTML('beforeend',
+            '<div class="empty">保存失败：' + errText(z.error) + '</div>'); return; }
+          renderLabMetrics(z.data.metrics);
+          loadLab();
+        })
+        .catch(() => {})
+        .finally(() => { btn.disabled = false; });
+    });
+
+    $('#lab-list').addEventListener('click', (ev) => {
+      const b = ev.target.closest ? ev.target.closest('[data-lab]') : null;
+      if (!b) return;
+      const id = b.dataset.id;
+      if (b.dataset.lab === 'delete') {
+        if (!confirm('删除后不可恢复（表达式与回测结论都会丢），确定？')) return;
+        labPost('delete', {factor_id: id}).then(() => loadLab());
+        return;
+      }
+      if (b.dataset.lab === 'status') {
+        labPost('status', {factor_id: id, status: b.dataset.status}).then(z => {
+          if (!z.ok) { alert(errText(z.error)); return; }
+          loadLab();
+        });
+      }
+    });
+  }
+
   Promise.all([get('/api/picks/options'), get('/api/meta'), get('/api/picks/latest')])
     .then(([opt, meta, latest]) => {
       renderOptions(opt);
@@ -349,12 +808,19 @@ a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{ou
           date: d.date, mode: d.mode, picks: d.picks,
           market_signal: d.market_signal, stage_timings: d.stage_timings,
           elapsed_seconds: d.elapsed_seconds,
+          // ⚠️ 这里必须显式带上 `screen_meta`：开机路径走的是"合成一个 result 对象"，
+          //    漏一个字段就等于页面上那块永远是"无执行记录"（首版就漏了，
+          //    探针 `temp/domcheck/gate_probe.mjs` 抓到）。与"函数写好≠页面看得见"
+          //    是同一类错误：字段在 API 里、在产物里都存在，就是没进这条渲染路径。
+          screen_meta: d.screen_meta,
         }}});
       }
     })
     .catch(() => { $('#ft').textContent = 'API 不可达'; });
 
   poll().then(z => { if (z && z.ok && z.data.running) startPolling(); });
+  // 因子实验室独立加载：它要读面板（首次 50s+），**不能**挡住选股结果的首屏渲染
+  loadLab();
 })();
 </script>
 </body>

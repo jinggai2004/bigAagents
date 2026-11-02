@@ -22,13 +22,22 @@ from core import factor_analysis as fa
 
 def _bars(closes, start="2024-01-02"):
     dates = pd.bdate_range(start, periods=len(closes))
+    # ⚠️ 量/额/换手/K 线形态不能是常数：turn_std20/amihud20/upshd20 等新因子
+    #    在截面内必须**有差异**才能算出 IC（2026-10-30 加因子时踩到：常数列
+    #    ⇒ 截面 rank 全相同 ⇒ IC=NaN ⇒ "算不出 IC"）。
+    #    扰动用"股票种子"（首收盘价+长度）派生：跨股票不同、时间上也循环。
+    # ⚠️ seed 必须跨股票不同：_sloped_map 的每只票 closes[0] 都是 10.0、长度相同
+    #    ⇒ 用首价做 seed 全部相同 ⇒ 新因子截面无差异 ⇒ IC=NaN（实测踩到）。
+    #    用收盘序列哈希（确定性、跨股票必异）。
+    seed = abs(hash(tuple(round(c, 6) for c in closes))) % 97
     return pd.DataFrame({
         "date": dates,
-        "open": closes, "high": [c * 1.01 for c in closes],
+        "open": [c * (0.995 + 0.003 * ((i + seed) % 3)) for i, c in enumerate(closes)],
+        "high": [c * (1.01 + 0.004 * ((i + seed) % 4)) for i, c in enumerate(closes)],
         "low": [c * 0.99 for c in closes], "close": closes,
-        "volume": [1_000_000.0] * len(closes),
-        "amount": [100_000_000.0] * len(closes),
-        "turnover_pct": [2.0] * len(closes),
+        "volume": [1_000_000.0 * (1 + 0.1 * ((i + seed) % 5)) for i in range(len(closes))],
+        "amount": [100_000_000.0 * (1 + 0.15 * ((i + seed) % 7)) for i in range(len(closes))],
+        "turnover_pct": [2.0 + 0.5 * ((i + seed) % 6) for i in range(len(closes))],
     })
 
 
@@ -59,7 +68,17 @@ S, E = "2024-01-02", "2024-06-28"
 
 
 def _run(bars_map, factors=("momentum20",), **kw):
+    """跑一份**合成**池（票码是 600000~600009，其中 600001/600002/600003 已退市、
+    不在真实面板清单里）。
+
+    ⚠️ 这里必须 `guard=False`：宇宙守卫对"清单里查不到的票"一律剔除，
+       而合成池里恰好有退市代码 ⇒ 池子从 10 只掉到 7 只，低于分层门槛，
+       报错却是"分层结果为空"，看上去像算法问题（2026-10-31 实际踩到）。
+       守卫的**接线**由 `tests/test_universe_guard_rollout.py` 单独覆盖，
+       这里测的是分层/IC 算法本身。
+    """
     kw.setdefault("step", 5)
+    kw.setdefault("guard", False)
     return fa.run([], factors=list(factors), start=S, end=E,
                   bars_map=bars_map, **kw)
 
@@ -282,9 +301,11 @@ def test_factors_subset_of_replayable_registry_fields():
 
 def test_pe_and_market_cap_are_declared_unavailable():
     """PE / 总市值 / 换手率必须被显式标为不可分析（而不是漏做）"""
-    for k in ("pe", "market_cap", "turnover"):
+    # ⚠️ turnover 已不在 unavailable（2026-10-29 turn_share 回填后历史换手可得，
+    #    amihud20/turn_std20 等已晋身 FACTORS）——若又被标回，说明数据源被改坏。
+    for k in ("pe", "market_cap"):
         assert k in fa.UNAVAILABLE, k
-        assert "历史截面" in fa.UNAVAILABLE[k] or "快照" in fa.UNAVAILABLE[k]
+    assert "turnover" not in fa.UNAVAILABLE, "换手率已可回放，不得标回 unavailable"
 
 
 def test_snapshot_gap_note_is_actionable():

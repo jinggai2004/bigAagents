@@ -64,21 +64,71 @@ def _disk_free_gb():
 
 # ---------------------------------------------------------------- 任务表
 def tasks() -> dict:
-    """18 个定时任务的定义 + 当前运行态。"""
+    """定时任务清单（内置 + 自定义）+ 运行态 + 可编辑元数据。
+
+    2026-11-01 起每行带 `note` / `model` / `enabled` / `mode_label`：
+    「任务清单是数据不是代码」这一层的后端（`core/scheduled_jobs.py`）早就写好了，
+    但页面只渲染三列只读信息 ⇒ 用户看不到也改不了备注/类型/模型（项目铁律
+    "函数写好 ≠ 页面看得见"）。这里把它需要的东西一次给全。
+    """
     from core.scheduler import JOBS
+    from core.scheduled_jobs import JOB_MODES
     import core.ui_runs as ui_runs
     import core.ui_tasks as ui_tasks
+
+    try:
+        from db import store as _store
+        overrides = _store.list_builtin_overrides()
+        custom = _store.list_scheduled_jobs()
+    except Exception as e:                       # noqa: BLE001
+        _logger.warning("[system] 任务配置读取失败（按默认值展示）: %s", e)
+        overrides, custom = {}, []
+
+    def _mode_label(mode: str) -> str:
+        return str((JOB_MODES.get(mode) or {}).get("label") or mode or "")
 
     rows = []
     for job_id, cron, mode, desc in JOBS:
         prog = ui_tasks.read_progress(job_id)
         rec = ui_runs.get_running_any(job_id)
         alive = ui_runs.get_running(job_id) is not None
+        ov = overrides.get(job_id) or {}
         rows.append({
             "job_id": job_id,
+            "kind": "builtin",
             "time": _cron_label(cron),
             "mode": mode,
+            "mode_label": _mode_label(mode),
             "desc": desc,
+            "note": ov.get("note") or "",
+            "model": ov.get("model") or "",
+            "enabled": ov.get("enabled", True) is not False,
+            "can_delete": False,          # 内置任务只能停用/恢复默认，不能删
+            "running": alive,
+            "last_run_at": (rec or {}).get("started_at") if rec else None,
+            "progress": _slim(prog),
+        })
+
+    for j in custom:
+        job_id = str(j.get("job_id") or "")
+        prog = ui_tasks.read_progress(job_id)
+        rec = ui_runs.get_running_any(job_id)
+        alive = ui_runs.get_running(job_id) is not None
+        cron = j.get("cron") or {}
+        rows.append({
+            "job_id": job_id,
+            "kind": "custom",
+            "time": _cron_label(cron) if cron else "—",
+            "mode": j.get("mode") or "",
+            "mode_label": _mode_label(j.get("mode") or ""),
+            "desc": j.get("name") or job_id,
+            "note": j.get("note") or "",
+            "model": j.get("model") or "",
+            "enabled": bool(j.get("enabled", True)),
+            "can_delete": True,
+            "trading_day_only": bool(j.get("trading_day_only", True)),
+            "cron": cron,
+            "error": j.get("error") or "",
             "running": alive,
             "last_run_at": (rec or {}).get("started_at") if rec else None,
             "progress": _slim(prog),
@@ -95,9 +145,153 @@ def tasks() -> dict:
     return envelope.ok({
         "jobs": rows,
         "total": len(rows),
+        "builtin": sum(1 for r in rows if r["kind"] == "builtin"),
+        "custom": sum(1 for r in rows if r["kind"] == "custom"),
+        "disabled": sum(1 for r in rows if not r["enabled"]),
         "running": sum(1 for r in rows if r["running"]),
+        # 新建任务表单要用的白名单（含 label/是否调模型/是否限交易日）
+        "modes": [{"mode": k, "label": v.get("label") or k,
+                   "llm": bool(v.get("llm")), "desc": v.get("desc") or "",
+                   "needs_trading_day": bool(v.get("needs_trading_day"))}
+                  for k, v in JOB_MODES.items()],
         "web_tasks": web_rows,
     })
+
+
+def set_jobs(action: str, payload: dict | None = None) -> dict:
+    """定时任务的增删改查（**人在页面上点**，不经模型）。
+
+    action:
+        `save`        新增或更新自定义任务 {job_id?, name, mode, cron, note, model, enabled}
+        `toggle`      启停 {job_id, enabled}（自动区分内置/自定义）
+        `delete`      删除 {job_id}（自定义=真删；内置=清覆盖行恢复默认）
+        `set_builtin` 内置任务的元数据覆盖 {job_id, note?, model?, enabled?}
+
+    ## 为什么不需要"两阶段确认"
+    与 `set_models` 同一条理由：这里是**人自己在配置页点**，选择动作本身就是确认。
+    再套一层确认只会让人以为"点了没生效"。（模型侧的写操作才有 preview→commit。）
+
+    ## 生效时机
+    自定义任务与内置覆盖都由调度进程的 60s 热同步循环落地（`reload_custom_jobs`），
+    **改完不用重启**。但最多滞后 60 秒才真正重排——返回值里明确写这一句。
+    """
+    from core.scheduled_jobs import JOB_MODES, find_conflicts, validate_job
+    from db import store as _store
+
+    p = dict(payload or {})
+    act = str(action or "").strip().lower()
+    job_id = str(p.get("job_id") or "").strip()
+
+    if act in ("toggle", "delete", "set_builtin") and not job_id:
+        return envelope.fail("invalid", "缺少 job_id")
+
+    if act == "save":
+        try:
+            incoming = {
+                "job_id": job_id or None,
+                "name": p.get("name"),
+                "mode": p.get("mode"),
+                "cron": p.get("cron") or {},
+                "note": p.get("note"),
+                "model": p.get("model"),
+                "enabled": p.get("enabled", True),
+                "trading_day_only": p.get("trading_day_only", True),
+            }
+            if job_id:
+                incoming["_original_id"] = job_id
+            try:
+                taken = [j["job_id"] for j in _store.list_scheduled_jobs()]
+            except Exception:                  # noqa: BLE001
+                taken = []
+            job = validate_job(incoming, taken_ids=taken, require_id=bool(job_id))
+        except ValueError as e:
+            return envelope.fail("invalid", str(e))
+        # 冲突提示不阻断（人和机器都需要知道会撞车，但排期是自由选择）
+        try:
+            conflicts = find_conflicts(job["cron"], mode=job["mode"],
+                                       exclude_id=job.get("job_id"))
+        except Exception:                      # noqa: BLE001
+            conflicts = []
+        try:
+            _store.upsert_scheduled_job(job)
+        except Exception as e:                 # noqa: BLE001
+            _logger.warning("[system] 保存任务失败: %s", e)
+            return envelope.fail("error", f"写入失败：{type(e).__name__}: {e}")
+        return envelope.ok({
+            "job": {**job, "time": _cron_label(job["cron"])},
+            "conflicts": conflicts,
+            "message": ("已保存「%s」，调度器将在 60 秒内热加载" % job["name"]),
+        })
+
+    if act == "toggle":
+        want = bool(p.get("enabled", True))
+        builtin_ids = {x[0] for x in _JOBS_CACHE()}
+        try:
+            if job_id in builtin_ids:
+                rec = _store.set_builtin_override(job_id, enabled=want)
+            else:
+                if not _store.set_scheduled_job_enabled(job_id, want):
+                    return envelope.fail("missing", f"任务不存在：{job_id}")
+                rec = {"job_id": job_id, "enabled": want}
+        except Exception as e:                 # noqa: BLE001
+            return envelope.fail("error", f"写入失败：{type(e).__name__}: {e}")
+        return envelope.ok({"job_id": job_id, "enabled": want,
+                            "message": ("已%s，调度器将在 60 秒内热加载"
+                                        % ("启用" if want else "停用"))})
+
+    if act == "delete":
+        builtin_ids = {x[0] for x in _JOBS_CACHE()}
+        try:
+            if job_id in builtin_ids:
+                # 内置任务不能真删（代码里还有），删覆盖行 = 恢复默认
+                _store.delete_builtin_override(job_id)
+                return envelope.ok({"job_id": job_id, "restored": True,
+                                    "message": "内置任务已恢复默认（启用、无备注、跟随默认模型）"})
+            ok = _store.delete_scheduled_job(job_id)
+        except Exception as e:                 # noqa: BLE001
+            return envelope.fail("error", f"删除失败：{type(e).__name__}: {e}")
+        if not ok:
+            return envelope.fail("missing", f"任务不存在：{job_id}")
+        return envelope.ok({"job_id": job_id, "deleted": True,
+                            "message": "已删除，调度器将在 60 秒内移除"})
+
+    if act == "set_builtin":
+        builtin_ids = {x[0] for x in _JOBS_CACHE()}
+        if job_id not in builtin_ids:
+            return envelope.fail("invalid", f"{job_id} 不是内置任务，请用 save")
+        # 局部更新：只有 payload 里出现的键才改（改开关不该抹掉备注）
+        kw = {}
+        if "enabled" in p:
+            kw["enabled"] = bool(p.get("enabled"))
+        if "note" in p:
+            kw["note"] = str(p.get("note") or "")
+        if "model" in p:
+            m = str(p.get("model") or "").strip()[:80]
+            if m:
+                try:
+                    from config import providers as _P
+                    known = {x for pr in _P.get_providers()
+                             for x in (pr.get("models") or [])}
+                    if known and m not in known:
+                        return envelope.fail(
+                            "invalid", f"模型「{m}」不在任何厂商的模型清单里")
+                except Exception as e:         # noqa: BLE001
+                    _logger.warning("[system] 模型校验跳过: %s", e)
+            kw["model"] = m
+        try:
+            rec = _store.set_builtin_override(job_id, **kw)
+        except Exception as e:                 # noqa: BLE001
+            return envelope.fail("error", f"写入失败：{type(e).__name__}: {e}")
+        return envelope.ok({"job_id": job_id, **rec,
+                            "message": "已保存，调度器将在 60 秒内热加载"})
+
+    return envelope.fail("invalid",
+                         f"未知操作「{action}」；可选 save/toggle/delete/set_builtin")
+
+
+def _JOBS_CACHE() -> list:
+    from core.scheduler import JOBS
+    return JOBS
 
 
 def _slim(prog):
@@ -326,8 +520,82 @@ def set_models(action: str, payload: dict | None = None) -> dict:
         return envelope.ok({"provider": pid, "enabled": enabled,
                             "message": f"{pid} 已{'启用' if enabled else '停用'}"})
 
+    if act == "provider_add":
+        # 新增厂商（2026-11-01）：此前只能在文件里手写 llm_providers.json
+        pid = str(p.get("provider") or p.get("id") or "").strip().lower()
+        try:
+            pid = P.validate_provider_id(pid)
+        except ValueError as e:
+            return envelope.fail("invalid", str(e))
+        name = str(p.get("name") or pid).strip()[:40]
+        base_url = str(p.get("base_url") or "").strip()
+        if not base_url:
+            return envelope.fail("invalid", "缺少 base_url（OpenAI 兼容端点，"
+                                            "如 https://api.example.com/v1）")
+        if not (base_url.startswith("http://") or base_url.startswith("https://")):
+            return envelope.fail("invalid", "base_url 必须以 http:// 或 https:// 开头")
+        api_key_env = str(p.get("api_key_env") or
+                          f"{pid.upper().replace('-', '_')}_API_KEY").strip()
+        models = p.get("models") or []
+        if isinstance(models, str):
+            models = [x for x in (s.strip() for s in models.split(",")) if x]
+        clean, seen = [], set()
+        for m in models if isinstance(models, list) else []:
+            s = str(m or "").strip()
+            if s and s not in seen:
+                seen.add(s)
+                clean.append(s)
+        try:
+            reg = P.get_registry()
+        except Exception as e:                 # noqa: BLE001
+            return envelope.fail("empty", f"{type(e).__name__}: {e}")
+        exists = [x for x in (reg.get("providers") or []) if x.get("id") == pid]
+        if exists:
+            return envelope.fail("invalid", f"厂商 ID「{pid}」已存在，请换一个")
+        reg.setdefault("providers", []).append({
+            "id": pid, "name": name, "base_url": base_url,
+            "api_key_env": api_key_env,
+            "models": clean,
+            "match": [f"{pid}-*"], "enabled": True,
+        })
+        try:
+            P.save_registry(reg)
+        except Exception as e:                 # noqa: BLE001
+            return envelope.fail("error", f"写入注册表失败：{type(e).__name__}: {e}")
+        return envelope.ok({
+            "provider": pid,
+            "message": (f"已新增厂商「{name}」。别忘了在 .env 里配置 {api_key_env}，"
+                        f"然后重启进程让密钥生效"),
+        })
+
+    if act == "provider_remove":
+        pid = str(p.get("provider") or "").strip().lower()
+        try:
+            reg = P.get_registry()
+        except Exception as e:                 # noqa: BLE001
+            return envelope.fail("empty", f"{type(e).__name__}: {e}")
+        provs = [x for x in (reg.get("providers") or []) if x.get("id") != pid]
+        if len(provs) == len(reg.get("providers") or []):
+            return envelope.fail("invalid", f"未知厂商：{pid}")
+        if not provs:
+            return envelope.fail("invalid", "至少要保留一个厂商，否则 LLM 调用全部失败")
+        # 删的是默认厂商 ⇒ 默认回落到剩下的第一个（否则注册表里默认指向不存在的 id，
+        # `default_provider()` 会静默返回 None，所有"跟随默认"的功能一起失灵）
+        switched = ""
+        if str(reg.get("default_provider") or "").lower() == pid:
+            reg["default_provider"] = provs[0]["id"]
+            switched = f"，默认厂商已切到 {provs[0]['id']}"
+        reg["providers"] = provs
+        try:
+            P.save_registry(reg)
+        except Exception as e:                 # noqa: BLE001
+            return envelope.fail("error", f"写入注册表失败：{type(e).__name__}: {e}")
+        return envelope.ok({"provider": pid, "removed": True,
+                            "message": f"已删除厂商「{pid}」{switched}"})
+
     return envelope.fail("invalid",
-                         f"未知 action：{action}（可用 feature/default/provider_models/provider_enabled）")
+                         f"未知 action：{action}（可用 feature/default/provider_models/"
+                         f"provider_enabled/provider_add/provider_remove）")
 
 
 def _host(base_url: str) -> str:

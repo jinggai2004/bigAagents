@@ -58,6 +58,7 @@
         padding:0 8px;outline:none}
   .askrow input:focus{border-color:var(--cy)}
   .askrow input::placeholder{color:var(--tx3)}
+  .asks button.on{border-color:var(--cy);color:var(--cy)}
   .askrow button{flex:none;height:27px;padding:0 11px;border:1px solid rgba(45,212,191,.35);
         background:rgba(45,212,191,.12);color:var(--cy);border-radius:6px;cursor:pointer;
         font:12px var(--mono);transition:background .15s}
@@ -108,6 +109,7 @@
       <button data-q="今天六轮你为什么一直没动手？" data-local="1">为什么不动</button>
       <button data-q="帮我看看宁德时代的技术面">看个股 ↗</button>
       <button data-q="今天有什么值得关注的？">问情报 ↗</button>
+      <button id="msgBtn" title="写给下一轮的阿深：它会读到并回应，要盯价位会真的挂条件">📩 留言板</button>
     </div>
     <div class="askrow">
       <input id="q" type="text" maxlength="200" autocomplete="off"
@@ -507,9 +509,76 @@ async function askAshen(text) {
   }
 }
 
+// ── 留言板（M4#1，2026-10-30）────────────────────────────────
+// chat 只读不留后果；留言进**下一值班轮的 prompt**，它必须逐条回应、
+// 要盯价位会真的 set_wake ⇒ 这才是"跟它说话有后果"。
+let msgMode = false;
+const msgBtn = document.getElementById('msgBtn');
+
+async function showMsgLedger() {
+  try {
+    const r = await fetch('/api/desk/ashen/messages?limit=5');
+    const z = await r.json();
+    if (!z || !z.ok) return;
+    const rows = (z.data && z.data.rows) || [];
+    const n = (z.data && z.data.pending) || 0;
+    const last = rows.find(x => x.status === 'consumed');
+    let line = '待回应 ' + n + ' 条';
+    if (last) line += ' · 上一条已在 ' + esc(String(last.round_slot || '?')) +
+      ' 那轮回过：' + esc(String(last.round_summary || '').slice(0, 60));
+    say('<span class="em">📩 留言板</span> ' + line +
+        '<div class="ask-hint" style="margin-top:4px">输入框已切到「留言」模式：写完点 →，它下一班必须读到并回应</div>');
+    sayPinned = Date.now() + 180000;
+  } catch (e) { /* 留言板只是辅助，拉不到台账不打扰 */ }
+}
+
+async function leaveMessage(text) {
+  const q = String(text || '').trim();
+  if (!q) return;
+  if (sendEl) sendEl.disabled = true;
+  try {
+    const r = await fetch('/api/desk/ashen/message?text=' + encodeURIComponent(q),
+                          { method: 'POST' });
+    const z = await r.json();
+    if (!z || !z.ok) {
+      const why = (z && z.error && (z.error.detail || z.error.type)) || '接口不可达';
+      say('<span class="em">你</span> ' + esc(q) +
+          '<div style="margin-top:5px">没送出去：' + esc(why) + '</div>');
+      return;
+    }
+    const d = z.data || {};
+    say('<span class="em">你</span> ' + esc(q) +
+        '<div style="margin-top:5px">📩 已留言。它会在<b>下一值班轮（' +
+        esc(String(d.next_slot || '?')) + '）</b>读到并逐条回应；' +
+        '要它盯价位请写清「标的 + 价格」，它会自己挂条件单</div>');
+    sayPinned = Date.now() + 180000;
+    msgMode = false;
+    if (msgBtn) msgBtn.classList.remove('on');
+    if (qEl) qEl.placeholder = '问阿深…（它只答自己账户和判断的事）';
+  } catch (e) {
+    say('<span class="em">你</span> ' + esc(q) +
+        '<div style="margin-top:5px">连不上主程序，留言没送出去。</div>');
+  } finally {
+    if (sendEl) sendEl.disabled = false;
+  }
+}
+
+if (msgBtn) msgBtn.addEventListener('click', () => {
+  msgMode = !msgMode;
+  msgBtn.classList.toggle('on', msgMode);
+  if (qEl) {
+    qEl.placeholder = msgMode
+      ? '写给下一轮的阿深…（如：盯住伊利，跌破 28 告诉我理由）'
+      : '问阿深…（它只答自己账户和判断的事）';
+    qEl.focus();
+  }
+  if (msgMode) showMsgLedger();
+});
+
 function submitAsk() {
   const v = qEl ? qEl.value : '';
   if (qEl) qEl.value = '';
+  if (msgMode) { leaveMessage(v); return; }
   askAshen(v);
 }
 if (sendEl) sendEl.addEventListener('click', submitAsk);

@@ -49,6 +49,7 @@ REQUIRED_TABLES = {
     "llm_calls", "runs", "scheduled_jobs", "task_locks", "chat_logs", "chat_sessions",
     # ── AI 助手配置写审计（2026-10-24，P0 写守护的追责/回滚依据，只增不删）──
     "agent_config_changes",
+    "financial_disclosures",
     # ── 自选股双轨（2026-10-27）──
     # watchlist_items：用户与阿深各一套自选，**唯一存放处**（JSON 已退役）。
     # app_flags：一次性迁移标记（如 watchlist_migrated_v1）。⚠️ 它不能丢 ——
@@ -60,6 +61,23 @@ REQUIRED_TABLES = {
     #   而盘中每分钟扫一次，重跑意味着同一只票可能被买 N 遍。
     #   它同时是成本对账的唯一来源（llm_called 计数）。
     "ai_routine_runs",
+    # ── 任务执行台账（2026-10-31）──
+    # job_runs：(job_id, run_date, slot) 是**补跑幂等锚点**。
+    #   丢了会怎样：调度器重启后无法判断"今天这个槽位跑过没有" ⇒ 要么漏跑
+    #   （2026-10-30 的 evening_analysis 就是这么丢的），要么重复跑（重复推飞书/重复下单）。
+    "job_runs",
+    # ── 可配置层 / 因子实验室 / 左侧关注池（2026-10-31 ~ 11-01）──
+    # builtin_job_overrides：内置任务的用户覆盖（启停/备注/模型），与"用户新增任务"
+    #   分表存储。丢了 = 用户对定时任务的配置全部回退到代码默认。
+    # user_factors：因子实验室的自定义因子（表达式 + 回测指标 + applied 状态）。
+    #   丢了 = 用户自己写的因子消失；其中 applied 的还会让 screener Stage 3.9 静默变空。
+    # watch_pool：左侧监测的关注池（三信号 + 资质卡快照 + 右侧状态机）。
+    #   丢了 = 60 天证伪倒计时与"已站回 MA20"标记全部重置。
+    "builtin_job_overrides", "user_factors", "watch_pool",
+    # ── 阿深留言板（M4#1，2026-10-30）──
+    # ashen_messages：人对它下指令的唯一通道。pending → 某个值班轮真的跑了
+    #   LLM ⇒ consumed（带轮次与原话）。丢了 = "留言后永远没有回音"。
+    "ashen_messages",
     # ── 来自 db/models.py 这第二套 DDL（不在 _SCHEMA 里，但同样必须存在）──
     "positions", "trade_logs", "daily_snapshots",
 }

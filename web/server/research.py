@@ -273,3 +273,65 @@ def attributions(name: str | None = None) -> dict:
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     data = {**res, "trips_shown": len(res.get("trips") or [])}
     return envelope.ok(data, as_of=now)
+
+
+# ================================================================
+# Brinson 行业归因（2026-10-30）
+# ================================================================
+#
+# `core.attribution` 早就算好三效应 + Carino 链接，但**没有调用方**（死代码）。
+# 装配层 `core.attribution_online` 从面板取数，实测 **1.9s**（含 21 天 × 5,572 只
+# 的 pyarrow 谓词下推），所以这里可以直接在线算，不必再造一个产物文件。
+#
+# ⚠️ 缓存键必须带**数据身份**：`screen_picks` 每跑一轮选股就变、面板每天更新。
+#    第一版如果只按 (start,end) 缓存，用户会看到"昨天选的股今天还是旧结论"。
+
+def _brinson_identity(start: str | None, end: str | None,
+                      source: str | None, min_names: int) -> tuple:
+    from data import bars
+    try:
+        from db.models import get_connection
+        conn = get_connection()
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) c, COALESCE(MAX(pick_date),'') m FROM screen_picks"
+            ).fetchone()
+            picks_fp = (int(row["c"]), str(row["m"]))
+        finally:
+            conn.close()
+    except Exception as e:                              # noqa: BLE001
+        _logger.debug("[research] Brinson 缓存指纹取库失败: %s", e)
+        picks_fp = ("nofp", "")
+    try:
+        panel_max = str(bars.panel_date_max() or "")
+    except Exception as e:                              # noqa: BLE001
+        _logger.debug("[research] Brinson 缓存指纹取面板日期失败: %s", e)
+        panel_max = "nofp"
+    return (start or "", end or "", source or "", int(min_names or 0),
+            picks_fp, panel_max)
+
+
+def brinson(start: str | None = None, end: str | None = None,
+            source: str | None = None, min_names: int = 0) -> dict:
+    """Brinson 行业归因：超额来自**选行业**（配置）还是**选股**（行业内选股）。"""
+    from core import attribution_online
+
+    def _run():
+        try:
+            return attribution_online.run(start=start, end=end,
+                                          source=source, min_names=min_names)
+        except Exception as e:                          # noqa: BLE001
+            _logger.warning("[research] Brinson 归因失败: %s: %s",
+                            type(e).__name__, e)
+            return {"ok": False, "code": "empty",
+                    "reason": f"{type(e).__name__}: {e}"}
+
+    res = cache.cached("research.brinson",
+                       _brinson_identity(start, end, source, min_names), TTL, _run)
+    if not isinstance(res, dict):
+        return envelope.fail("empty", "归因结果不是对象")
+    if not res.get("ok"):
+        return envelope.fail(str(res.get("code") or "empty"),
+                             str(res.get("reason") or "归因不可用"))
+    return envelope.ok({k: v for k, v in res.items() if k != "ok"},
+                       as_of=res.get("periods_range", [None])[-1])

@@ -293,9 +293,16 @@ class TestMutualExclusion:
         wait_done("demo")
 
     def test_stale_marker_does_not_block_forever(self, monkeypatch):
-        """心跳停了的旧标记不该永远挡住新任务"""
+        """心跳停了的旧标记不该永远挡住新任务。
+
+        ⚠️ 超时给 **-1** 而不是 0：Windows 上 `time.time()` 的粒度约 **15.6ms**
+        （GetSystemTimeAsFileTime），`mark_running` 与这里的判定很容易落在**同一个
+        时间片**里 ⇒ 心跳年龄恰为 `0.0` ⇒ `is_alive` 用严格大于比较（`0.0 > 0.0`
+        为假）⇒ 被误判成"还活着"，用例随机红（2026-10-30 实测连续两轮失败）。
+        给负数让判据与时钟粒度无关，测的是"超时即失效"这个语义本身。
+        """
         ui_runs.mark_running("demo")
-        monkeypatch.setattr(ui_runs, "HEARTBEAT_TIMEOUT_SECONDS", 0)
+        monkeypatch.setattr(ui_runs, "HEARTBEAT_TIMEOUT_SECONDS", -1)
         assert ui_tasks.start("demo", lambda progress: None) is True
         wait_done("demo")
 

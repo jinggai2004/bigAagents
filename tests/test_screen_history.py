@@ -99,6 +99,22 @@ class TestStorePicks:
         assert db_store.insert_screen_picks([]) == 0
         assert db_store.list_screen_picks() == []
 
+    def test_insert_is_idempotent_per_day_code(self, temp_store):
+        """同一天多轮选股不得重复落库（2026-10-29 修：220 行 / 110 只 = 2.0×）。
+
+        语义 = 后一轮覆盖前一轮的评分/排名（与统计层 `_dedup_screen_picks_sql`
+        取 id 最大的口径一致）；**回填列不能被冲掉**。
+        """
+        db_store.insert_screen_picks([_pick(score=70.0, rank_in_run=3)])
+        rid = db_store.list_screen_picks()[0]["id"]
+        db_store.update_screen_pick_backfill(rid, {"ret_5d": 0.05})
+        # 第二轮：同日同票，分数/排名变了
+        db_store.insert_screen_picks([_pick(score=88.0, rank_in_run=1)])
+        rows = db_store.list_screen_picks()
+        assert len(rows) == 1, f"同日同票只能一行，实际 {len(rows)}"
+        assert rows[0]["score"] == 88.0 and rows[0]["rank_in_run"] == 1
+        assert rows[0]["ret_5d"] == 0.05, "重跑选股不得冲掉已回填的收益"
+
     def test_filters(self, temp_store):
         db_store.insert_screen_picks([_pick(source="screen"),
                                       _pick(stock_code="000001", source="nl_screen")])
@@ -424,11 +440,16 @@ class TestBackfill:
 # ================================================================
 
 def _insert_batch(batch_time: str, codes: list):
-    """写入一个"批次"：同 created_at 的前 5 名。"""
+    """写入一个"批次"：同 created_at 的前 5 名。
+
+    ⚠️ 2026-10-29：screen_picks 已加 (pick_date, stock_code) 唯一索引，
+    本用例要模拟**历史库**里同一日期跨批次重复的形态，因此先 drop 索引。
+    """
     import sqlite3
     import db.models as models
     conn = sqlite3.connect(models.DB_PATH)
     try:
+        conn.execute("DROP INDEX IF EXISTS uq_screen_picks_day_code")
         for i, c in enumerate(codes, 1):
             conn.execute(
                 """INSERT INTO screen_picks

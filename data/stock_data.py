@@ -23,6 +23,45 @@ _EM_INFO_COOLDOWN = 600  # 冷却秒数
 _em_info_circuit_open_until = 0.0
 
 
+def _panel_daily(symbol: str, start_ymd: str, end_ymd: str,
+                 min_bars: int = 60):
+    """本地面板日线 → 与网络源**同构**的 DataFrame（Date 索引 + 大写 OHLCV）。
+
+    为什么放在这里而不是调用方（2026-10-30）：
+    `get_stock_data` 的下游是 `calculate_technical_indicators` / `get_latest_indicators`，
+    它们吃的是网络源的名字（`Close/MA5/...`）；把"面板→同构"的转换放在取数函数内部，
+    所有调用方（深度分析 / 聊天工具 / 技术面）就都自动获得面板优先，无需各自判断。
+
+    Returns:
+        DataFrame（Date 索引，Open/High/Low/Close/Volume）——面板根数 ≥ min_bars 时；
+        否则 None（调用方照旧走网络，**绝不返回半截数据冒充成功**）。
+    面板不足 60 根时坚持走网络的原因：`MIN_BARS_FOR_INDICATORS=60`，MA60 会变 NaN，
+    硬用面板会制造"指标缺失"这类二次故障。
+    """
+    try:
+        from data import bars as _bars          # 同层导入，无分层问题
+        df = _bars.get_bars(symbol, start_ymd, end_ymd, adjust="qfq")
+        if df is None or df.empty or len(df) < min_bars:
+            return None
+        out = df.rename(columns={
+            "open": "Open", "high": "High", "low": "Low",
+            "close": "Close", "volume": "Volume",
+        })
+        # ⚠️ `get_bars` 的日期是**普通列**（`date`），索引是 RangeIndex。
+        #    第一版直接把 RangeIndex 当日期转 ⇒ 全部变成 1970-01-01，
+        #    行数和价格都对、唯独日期全错 —— 这类 bug 最难被发现。
+        #    （首版实测：行数 242、close 54.29 全对，日期却是 1970。）
+        out["Date"] = pd.to_datetime(out["date"])
+        out = out.set_index("Date")
+        out = out[["Open", "High", "Low", "Close", "Volume"]].copy()
+        return out.sort_index()
+    except Exception as e:                      # noqa: BLE001
+        # 面板读不到不该让取数整体失败：如实记日志后走原网络路径
+        _logger.warning("[面板优先] %s 读本地面板失败（%s: %s），改走网络",
+                        symbol, type(e).__name__, e)
+        return None
+
+
 def _period_key(value) -> str:
     """把各种"报告期"写法归一成可比较的 8 位字符串（YYYYMMDD）。
 
@@ -593,7 +632,20 @@ class StockDataFetcher:
                 start_date = (datetime.now() - timedelta(days=30 * int(period[:-2]))).strftime('%Y%m%d')
             else:
                 start_date = (datetime.now() - timedelta(days=365)).strftime('%Y%m%d')
-            
+
+            # ── 本地面板优先（2026-10-30）─────────────────────────────
+            # 事故：WinINET 代理指向未启动的 Clash，深度分析/聊天的 K 线走纯网络
+            # ⇒ 3 个源全部连接被拒 ⇒ fatal "所有数据源均无法获取历史数据"。
+            # 而本地面板（data/panel）当天就存有该股全部日线（600276 实测 2,626 根，
+            # 截至 10-29），**有数据却判成没有**。
+            # 面板就是这个项目的权威日线源（`bars.get_bars` 不联网、支持 qfq 与
+            # YYYYMMDD），命中即返回，网络只作面板不足时的兜底。
+            panel_df = _panel_daily(symbol, start_date, end_date)
+            if panel_df is not None:
+                _logger.info("✅ %s 命中本地面板 %d 根（未走网络，%s ~ %s）",
+                             symbol, len(panel_df), start_date, end_date)
+                return panel_df
+
             # 使用数据源管理器获取数据（自动切换akshare和tushare）
             df = self.data_source_manager.get_stock_hist_data(
                 symbol=symbol,

@@ -58,6 +58,10 @@ def _raw_pick(db_path, **kw):
     p.update(kw)
     conn = sqlite3.connect(db_path)
     try:
+        # ⚠️ 2026-10-29：screen_picks 现在有 (pick_date, stock_code) 唯一索引，
+        #    本用例要模拟**历史库**（索引建立前/从旧备份恢复）的重复行，
+        #    因此显式 drop 索引——被测的是读路径的去重，不是写入约束。
+        conn.execute("DROP INDEX IF EXISTS uq_screen_picks_day_code")
         conn.execute(
             """INSERT INTO screen_picks
                (pick_date, stock_code, stock_name, source, strategy, score,

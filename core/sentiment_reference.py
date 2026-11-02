@@ -1081,6 +1081,19 @@ def build_for_source(items: list, source: str, as_of: str = None,
                         res=res, rule_labels=rule_labels)
     else:
         snap = build_snapshot(rows, source=source, as_of=as_of)
+        # ── 逐条留痕（rule 口径，2026-11-01 修）──
+        # `_persist_labels` 原来**只在 llm 分支调用** ⇒ 每天 15:20 的定时采集
+        # 只写日聚合快照，系统页的「情绪标注留痕」表只在那天有人手动点过
+        # LLM 判定时才有数据。实测 2026-10-23 之后 **9 天空白**，页面看起来
+        # 像"功能坏了"，实际是两条路径只接通了一条（改了要问"另一条入口呢"）。
+        # 词表标注零成本可复现，每天写一份正是这一层要攒的原始资产；
+        # 落库幂等（`ON CONFLICT(trade_date, source, post_key, labeler)`）。
+        _persist_labels(
+            rows, source, snap, labeler="rule",
+            res={"labels": [classify_stance(item_text(it))["stance"] for it in rows],
+                 "quotes": [""] * len(rows),
+                 "quote_hit": [None] * len(rows),
+                 "whys": ["词表规则"] * len(rows)})
 
     try:
         from db import store

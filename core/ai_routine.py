@@ -35,10 +35,13 @@ _logger = logging.getLogger(__name__)
 
 PERSONA_NAME = "ai_ashen"
 
-# 6 轮/日。全部避开已知重活（见报告 §4.3）：
-# 09:25 选股跑到 09:36、09:45 结算、11:30 午间选股、13:05 午间决策轮、
-# 14:50 风控巡检。14:40 必须早于 14:50 —— 否则阿深的调整和风控巡检
+# 6 轮/日。全部避开已知重活（见报告 §4.3，2026-11-01 排期重排后）：
+# 08:15 盘前选股（P90 54 分钟 ⇒ 09:09 前完）、09:45 结算、13:05 午间决策轮、
+# 13:30 选股回填、14:45 风控巡检、14:50 左侧预扫。
+# ⚠️ 14:40 必须**早于** 14:45 的风控巡检 —— 否则阿深的调整和风控巡检
 # 抢同一份行情，且结论可能互相矛盾（阿深刚加仓、风控立刻报超限）。
+# ⚠️ 这六班不在 `JOBS` 里（由盯盘任务按 slot 触发）⇒ 排期冲突检测器**看不见**，
+#    加/改尾盘任务时必须回来人工核对这张表。
 SLOTS = ("09:40", "10:20", "11:00", "13:20", "14:00", "14:40")
 
 # 时段剧本：同一个阿深，钟点不同，**该干的事就不同**。
@@ -321,7 +324,8 @@ def build_prompt(*, now: datetime, slot: str, level: str, auton_desc: str, budge
                  cash: float, nav: float, holdings: list, my_watch: list,
                  user_watch: list, quotes: dict, last_summary: str = "",
                  candidates: list | None = None,
-                 trail: list | None = None, armed: list | None = None) -> str:
+                 trail: list | None = None, armed: list | None = None,
+                 owner_messages: list | None = None) -> str:
     """值班轮 prompt（单轮、无工具、只要一个 JSON）。
 
     ⚠️ 边界数字一律来自 `ai_autonomy.describe()`（通过 `budget_desc` 传入），
@@ -374,6 +378,11 @@ def build_prompt(*, now: datetime, slot: str, level: str, auton_desc: str, budge
             parts.append(f"{c.get('code')} {c.get('kind')} {v}")
         return "、".join(parts) if parts else "（没有）"
 
+    def _msgs(rows) -> str:
+        parts = [f"{i}. {str(r.get('text') or '').strip()}"
+                 for i, r in enumerate(rows or [], 1)]
+        return "\n    ".join(parts) if parts else "（没有）"
+
     held = _brief(holdings)
     mine = _brief(my_watch, ("code", "name", "note", "price", "change_pct"))
     boss = _brief(user_watch, ("code", "name", "note", "price", "change_pct"))
@@ -403,6 +412,10 @@ def build_prompt(*, now: datetime, slot: str, level: str, auton_desc: str, budge
     候选里看中谁，先 `watch_add` 加进自己的池子，**下一轮**才可能买（本轮加的不算数）
 【今天的判断轨迹（你自己说过的话，按时间）】{_trail(trail)}
 【你当前挂着的等待条件】{_armed(armed)}   ← 这是**真的会被触发的条件**，价位到了会叫你
+【老板的留言（{len(owner_messages or [])} 条，本轮必须逐条回应）】{_msgs(owner_messages)}
+    ← 这些话**不再是客套**：写进来就是让你执行/回答的。
+    要盯某个价位 ⇒ 必须同时输出 `set_wake`（光说"我会盯着"不算，没挂条件就是空话）；
+    问你判断 ⇒ 在 summary 里正面回答；觉得指示不合理 ⇒ 说清为什么不照做
 【上一轮你的结论】{last_summary or "（今天还没有上一轮）"}
 
 【可选动作（只输出一个 JSON 对象，不要代码块、不要解释文字）】
@@ -610,7 +623,7 @@ def _auto_watch(candidates: list, my_watch: list) -> dict | None:
 
 
 def _execute(kept: list[dict], account, today: str, quotes: dict,
-             nav: float) -> list[dict]:
+             nav: float, owner: str = "self") -> list[dict]:
     """把通过授权判据的动作**落地**：买卖落成委托单、自选变更直接写库。
 
     ⚠️ 自选变更必须在这里落地，不能只判不写：`autonomy_check` 判定 `watch_add`
@@ -687,10 +700,13 @@ def _execute(kept: list[dict], account, today: str, quotes: dict,
                     "threshold": a.get("threshold"),
                     "threshold_pct": a.get("threshold_pct"),
                     "wake_at": a.get("wake_at"),
-                    "note": str(a.get("reason") or "")[:200]})
+                    "note": str(a.get("reason") or "")[:200],
+                    # M4#2：老板留言消费轮挂的条件标 'boss'，自主风控标 'self'
+                    "owner": owner})
                 out.append({"code": code, "action": "set_wake", "status": "ok",
                             "kind": kind, "threshold": a.get("threshold"),
-                            "threshold_pct": a.get("threshold_pct")})
+                            "threshold_pct": a.get("threshold_pct"),
+                            "owner": owner})
 
     if account is None:
         return out
@@ -713,7 +729,7 @@ def _execute(kept: list[dict], account, today: str, quotes: dict,
                                      reason=str(a.get("reason") or "")[:80])
         out.append({"code": code, "action": "sell", "qty": avail,
                     "order_id": order.order_id, "status": order.status,
-                    "reason": order.reason})
+                    "reason": order.reason, "name": _name(code)})
     for a in buys:
         code = str(a["code"])
         px = (quotes.get(code) or {}).get("price")
@@ -737,8 +753,50 @@ def _execute(kept: list[dict], account, today: str, quotes: dict,
         out.append({"code": code, "action": "buy", "qty": qty,
                     "order_id": order.order_id, "status": order.status,
                     "limit_price": a.get("limit_price"), "decision_price": px,
-                    "reason": order.reason})
+                    "reason": order.reason, "name": _name(code)})
+
+    # ── M4#3（2026-10-31）：真实提交的买卖委托推飞书 ──
+    # 铁律：只推**真实落单**的（out 里带 order_id 的）——"想买但被拒"不是成交，
+    # 推出去会让人以为已建仓；幂等键含 code+action ⇒ 同日同票只推一次。
+    _push_trades(out, today)
     return out
+
+
+def _push_trades(results: list[dict], today: str) -> None:
+    """把本轮成功提交的买卖委托推到飞书/钉钉（未配置 webhook 时静默跳过）。
+
+    幂等：`push_markdown(dedupe_key=...)` 保证"手动重放 + 定时任务"不会推两遍。
+    推送失败只告警，不影响值班轮主流程。
+    """
+    trades = [r for r in (results or [])
+              if r.get("action") in ("buy", "sell") and r.get("order_id")]
+    if not trades:
+        return
+    try:
+        from core.push import push_markdown
+
+        names = {r["code"]: r.get("name") or "" for r in trades}
+        lines = []
+        for r in trades:
+            act = "买入" if r["action"] == "buy" else "卖出"
+            nm = names.get(r["code"]) or ""
+            head = f"- **{act}** {r['code']} {nm}".rstrip()
+            if r.get("qty"):
+                head += f" {r['qty']} 股"
+            if r.get("limit_price"):
+                head += f"（限价 {r['limit_price']}）"
+            if r.get("reason"):
+                head += f" ｜ {str(r['reason'])[:60]}"
+            lines.append(head)
+        body = (f"【阿深交易动作 {today}】\n"
+                f"{len(trades)} 笔委托已提交（次日开盘撮合）：\n"
+                + "\n".join(lines))
+        key = "trade:ashen:" + today + ":" + ",".join(
+            sorted(f"{r['action']}:{r['code']}" for r in trades))
+        push_markdown(body, title=f"阿深交易动作 {today}", dedupe_key=key)
+        _logger.info("[阿深值班] 已推送 %d 笔交易动作（幂等键 %s）", len(trades), key)
+    except Exception as e:                                  # noqa: BLE001
+        _logger.warning("[阿深值班] 交易动作推送失败（不影响主流程）: %s", e)
 
 
 def _load_account(name: str):
@@ -887,13 +945,17 @@ def run_due(quotes: dict, *, now: datetime | None = None, force: bool = False,
             break
         if _r.get("status") == "skipped":
             skips_since_llm += 1
+    # ── 老板留言（M4#1，2026-10-30）──
+    # 有留言 ⇒ 这一轮**必须跑**：市场再安静也不能把老板的话跳过去（否则"留了言
+    # 没有回音"，互动性等于零）。留言不改变 worth_llm 的判断本身，只是压过它的否决。
+    owner_msgs = store.pending_ashen_messages(limit=5)
     if not force:
         worth, why = worth_llm(quotes, holdings=[h["code"] for h in holdings],
                                my_watch=[w["code"] for w in my_watch],
                                user_watch=[w["code"] for w in user_watch],
                                last_run_at=last_at, now=now,
                                skips_since_llm=skips_since_llm)
-        if not worth:
+        if not worth and not owner_msgs:
             store.save_routine_run(PERSONA_NAME, today, slot, status="skipped",
                                    llm_called=False, skip_reason=why,
                                    autonomy=level)
@@ -923,7 +985,9 @@ def run_due(quotes: dict, *, now: datetime | None = None, force: bool = False,
         trail=llm_runs,
         # 它自己**真的**挂着的等待条件。它嘴上说"在等 28 元"，条件表里却一条都
         # 没有过；摊开给它看，才能"沿用/覆盖/撤掉"，用户也才能核对。
-        armed=_armed_conditions())
+        armed=_armed_conditions(),
+        # 老板留言（M4#1）：有就进 prompt，它必须逐条回应；跑完后统一标记已读。
+        owner_messages=owner_msgs)
     try:
         from llm.deepseek_client import DeepSeekClient, model_override, TEMP_ANALYTICAL
         client = client_factory(persona) if client_factory else DeepSeekClient()
@@ -1006,7 +1070,9 @@ def run_due(quotes: dict, *, now: datetime | None = None, force: bool = False,
     results = []
     if execute and verdict["kept"]:
         try:
-            results = _execute(verdict["kept"], account, today, quotes, nav)
+            # M4#2：本轮消费了老板留言 ⇒ 它挂的唤醒条件归属 'boss'
+            results = _execute(verdict["kept"], account, today, quotes, nav,
+                               owner="boss" if owner_msgs else "self")
             if account is not None:
                 from core import ai_league
                 ai_league._save(account)                    # 与联赛同一条保存路径
@@ -1021,6 +1087,12 @@ def run_due(quotes: dict, *, now: datetime | None = None, force: bool = False,
         model=str(persona.get("model") or ""),
         # 空串 = 它自己就给了实质动作；非空 = 补正/兜底过（见建表注释）
         enforced=enforced)
+    # 老板留言在这一轮**真的被读过并回应了** ⇒ 标记已读（带轮次与原话）。
+    # 放在 save_routine_run(ok) 之后：上面任何一步抛异常时留言留在 pending，
+    # 下一轮补上 —— "读了没回"比"还没读"严重。
+    if owner_msgs:
+        n = store.consume_ashen_messages(slot, summary)
+        _logger.info("[阿深值班] 已回应老板留言 %d 条（%s）", n, slot)
     return {"slot": slot, "llm_called": True, "level": level,
             # `kept` 口径 = **真实可执行的动作数**（不含兜底 pass）。
             # 混淆这两者会让"被拦 1 笔"看起来像"执行了 1 笔"。

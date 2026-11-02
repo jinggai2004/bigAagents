@@ -120,9 +120,10 @@ FEATURES: dict[str, dict] = {
     "news_industry.review": {
         "label": "新闻行业评审", "group": "新闻", "tier": TIER_GLOBAL,
         "desc": "24h 快讯按行业判利好/利空/中性"},
-    "ui.zhihu_summary": {
-        "label": "热点知乎汇总", "group": "新闻", "tier": TIER_GLOBAL,
-        "desc": "热点新闻页：知乎内容要点归纳（仅展示，不参与分析）"},
+    # 2026-11-01：`ui.zhihu_summary` 已删除 —— 唯一调用点是 Streamlit 热点新闻页
+    # （已归档到 archive/legacy_streamlit_20261101/ui）。保留"登记了没人用"的死键
+    # 会让结构性守护（test_model_routing 的正反向检查）失去意义。
+    # 若日后 Web 版要加知乎汇总，按新前缀重新登记（如 `web.zhihu_summary`）。
     # ── 选股 ──
     "nl_screener.parse": {
         "label": "NL 选股解析", "group": "选股", "tier": TIER_GLOBAL,
@@ -150,6 +151,12 @@ FEATURES: dict[str, dict] = {
         "desc": "逐条判立场并附原文引用（引用须逐字命中，否则整块作废）"},
     # ── 系统 ──
     "config.test": {
+        # ⚠️ 2026-11-01：**当前无调用点** ⇒ 标 reserved。
+        #    原调用点是 Streamlit 系统配置页的「LLM 连通性测试」按钮（页面已归档）；
+        #    新的 Web 系统页按设计**不做**连通性探测（`web/server/system.py` 里写明：
+        #    页面每 10s 刷新，真发一次请求会拖垮它）。保留登记是为了将来接回时
+        #    模型档位与分组不丢，而不是假装它还在被使用。
+        "reserved": True,
         "label": "连通性测试", "group": "系统", "tier": TIER_GLOBAL,
         "desc": "系统配置页「LLM 连通性测试」按钮（模型由用户当场选）"},
 

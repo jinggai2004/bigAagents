@@ -221,6 +221,9 @@ def test_conclusion_tools_registered_and_limited():
         assert n in names and n in TOOL_FUNCS, f"{n} 未注册"
         assert n in _TOOL_RESULT_CHAR_LIMITS, f"{n} 未进字符配额表（会被1500截断）"
     # 工具数量是**成本护栏**：每个 schema 都进每次请求的 prompt，不能无节制追加。
-    # 2026-10-28 加上 `tool_ashen_status`（阿深第三套账本）后**用满 30** ⇒
-    # 之后再要加工具，必须先合并或下线一个，不能直接改这个数字了事。
-    assert len(names) == 30, "工具数 30（预算上限 30，已用满）"
+    # 2026-10-28 加上 `tool_ashen_status`（阿深第三套账本）后**用满 30**。
+    # 2026-10-30：30 → **31**，加 `tool_fin_disclosures`（财报公告日 / PIT 前视防护）。
+    #   依据：用户明确同意增加预算；实测一个紧凑 schema 只多 ~400 字符（≈200 tokens），
+    #   当前总量 13,275 字符 ≈ 6.6k tokens/轮。**代价要看见，所以数字留在这里**：
+    #   再加工具前先量 `len(json.dumps(TOOL_SCHEMAS))`，能折叠成 action 子命令就折叠。
+    assert len(names) == 31, "工具数 31（预算上限 31）"

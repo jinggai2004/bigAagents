@@ -6,7 +6,7 @@
   <img alt="Python" src="https://img.shields.io/badge/Python-3.12+-3776AB?logo=python&logoColor=white">
   <img alt="License" src="https://img.shields.io/badge/License-Apache--2.0-blue">
   <img alt="Tests" src="https://img.shields.io/badge/tests-3500%2B-green">
-  <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%7C%20Docker-lightgrey">
+  <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-lightgrey">
 </p>
 
 > **定位：研究与复盘系统，不是交易系统。**
@@ -193,7 +193,9 @@ AI 结果只在对照层比较，绝不回灌主链。
 ## 快速开始
 
 > 本项目**按 Windows 优先开发**（bat 脚本、Win32 单实例互斥），跨平台在 Roadmap。
-> 也提供 Dockerfile（Linux 下服务层可用，调度器行为需自行验证）。
+> ⚠️ **容器化暂不可用**：原 Dockerfile/compose 是针对已废弃的 Streamlit 界面写的
+> （`streamlit run ui/app.py`），界面层归档后已随之移除。现在的服务入口是
+> `python scripts/serve_web.py`（FastAPI + uvicorn），容器化需要按它重写。
 
 ### 1. 环境与安装
 
@@ -286,7 +288,7 @@ core/     # 领域层（全部业务逻辑在此，Web 层只做薄包装）
   ├─ style_attribution.py# 风格回归（NW-HAC）
   ├─ zt_calendar.py      # 涨跌停「板块+日期」历法
   ├─ market_factor.py    # 全市场等权因子（唯一来源）
-  └─ scheduler.py        # 15 个调度任务（JOBS 唯一权威）
+  └─ scheduler.py        # 22 个调度任务（JOBS 唯一权威）
 data/     # 数据层：多源(新浪/东财/BaoStock/Tushare/akshare) + 降级链 + 全市场面板
 web/      # FastAPI 服务 + 原生 JS 前端（10 页模板 / 48 端点 / 1 WebSocket）
 db/       # SQLite 持久化（timeout=15，无 WAL 是刻意选择）
@@ -295,7 +297,6 @@ scripts/  # 数据回填 / 回测扫描 / walk-forward / 打包 / 看门狗
 companion/ # 桌面伴生 UI 资产（three.js 房间/角色模型）
 docs/     # 权重变更闸门模板 / 数据重建指南
 output/   # 前端开发文档（端点契约，测试闸门消费）
-ui/       # 早期 Streamlit 页面（已被 web/ 取代，保留供参考）
 ```
 
 ## 数据源与合规声明
@@ -327,8 +328,9 @@ A: 有意为之。各数据源能力不同（BaoStock 无北交所估值、新�
 系统按"缺就是缺"显示 `degraded` 并标注口径，而不是拿部分数据冒充完整结论。
 
 **Q: Linux / macOS 能跑吗？**
-A: 服务层可以（有 Dockerfile）；调度器与部分脚本依赖 Windows 细节
-（bat、Win32 单实例互斥）。跨平台在 Roadmap 首位。
+A: 服务层可以（`scripts/serve_web.py` 是纯 Python + uvicorn）；调度器与部分脚本
+依赖 Windows 细节（bat、Win32 单实例互斥），容器化也还没按 web 入口重写。
+跨平台在 Roadmap 首位。
 
 ## Roadmap
 
@@ -398,8 +400,10 @@ copy config\llm_providers.example.json config\llm_providers.json   # fill your a
 python scripts/serve_web.py                           # http://127.0.0.1:8765
 ```
 
-Windows-first (bat scripts); a Dockerfile is provided for the service layer.
-Data rebuild guide: `docs/DATA_SETUP.md`. 3,500+ tests; CI runs a pure-logic subset.
+Windows-first (bat scripts). Containerization is **not available yet** — the old
+Dockerfile targeted the retired Streamlit UI and has been removed; the service entry
+is `python scripts/serve_web.py`.
+Data rebuild guide: `docs/DATA_SETUP.md`. 4,400+ tests; CI runs a pure-logic subset.
 
 ## License
 

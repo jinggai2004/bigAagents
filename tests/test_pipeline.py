@@ -236,22 +236,45 @@ class TestScheduler:
         jobs = {j.id: j for j in scheduler.get_jobs()}
         # 显式清单是真正的契约（防止任务被误删）；条数用 len(JOBS) 而不是写死数字，
         # 免得每加一个任务都要来这里改一次数字（但改清单要是有意的）。
+        # ⚠️ 2026-11-01：`noon_screen` 已并入 `morning_screen`（同 mode 同产物，
+        #    一天三次全市场重跑没有必要），`ai_settle_close` 已并入 `ai_mark_nav`
+        #    的 `ai_close` mode（结算 + 净值一次做完）。这两个 id 不该再出现。
         assert set(jobs) == {
-            "morning_screen", "noon_screen", "afternoon_full",
+            "morning_screen", "afternoon_full",
             "backfill_analysis", "backfill_screen", "daily_review",
             "hourly_news", "intraday_watch",
             "snapshot_flow",           # 批次 22：盘后全市场资金流快照落库
             "risk_check",              # 2026-09-28：持仓风控巡检（14:50）
             "news_review",             # 2026-10-09：新闻行业利好/利空评估（15:55）
             "ai_daily_round",          # 2026-10-14：AI交易联赛·盘后决策轮（15:58，会花 token）
-            "ai_settle_open",          # 2026-10-14：联赛 T+1 开盘结算（09:32，零 LLM）
-            "ai_settle_close",         # 2026-10-14：联赛收盘结算·日内卖出（15:05，零 LLM）
-            "ai_mark_nav",             # 2026-10-15：联赛当日净值（15:52，晚于快照、早于决策轮）
+            "ai_settle_open",          # 2026-10-14：联赛 T+1 开盘结算（09:45，零 LLM）
+            # 2026-11-01：收盘结算 + 当日净值合并为一条（mode=ai_close，16:30）。
+            # 两步都是纯账本，且都要"当日收盘价可用"之后 ⇒ 没必要占两个槽位。
+            "ai_mark_nav",
             "evening_analysis",        # 2026-10-19：盘后批量深度分析（18:10，DeepSeek 空闲时段）
             "ai_midday_round",         # 2026-10-23：联赛午间决策轮（13:05，与盘后轮各占 1 次配额）
             "sentiment_ref",           # 2026-10-23：市场情绪参照采集（15:45，零 LLM，只为攒历史基准）
+            "fin_disclosure",          # 2026-10-30：财报公告日刷新(08:30，零 LLM，PIT 前视防护底座)
+            # 2026-10-30：交易拥挤度截面（16:30，零 LLM）—— 供次日盘前选股的**减法闸门**。
+            # 刻意独立成任务而不塞进 15:40 的快照任务：实测单跑 146s，挂上去会把
+            # snapshot_flow 推到 15:52 之后，而 15:50 的复盘把 snapshot 当上游依赖。
+            "crowd_snapshot",
+            # 2026-10-31：超额衰减监控（16:45，零 LLM）—— 读 screen_picks 的
+            # ret_20d/bench_ret_20d 算滚动 6 月超额，alert 才推飞书。
+            # 刻意独立：它盯的是**实盘产物**，与研究脚本不是一回事。
+            "alpha_decay",
+            # 2026-11-01：左侧监测两条（14:45 盘中预扫 / 16:15 收盘正式版，零 LLM）。
+            # 盘中预扫读实时快照出次日清单；收盘版读日频面板并对全池跑右侧状态机。
+            "leftside_intraday", "leftside_close",
+            # 2026-11-01：换手率/流通股本日更（17:15，零 LLM）。
+            # 补的是"会自己变坏"的缺口：turn_share 层 10-29 一次性回填后再无更新，
+            # 下游 factor_analysis 用 ffill(limit=3) 兜尾部 ⇒ 第 4 个交易日（11-03）
+            # 起量价因子出 NaN。刻意独立成槽位：全量打新浪接口实测 21 分钟，
+            # 挂到 afternoon_full / snapshot_flow 都会把下游排期推翻。
+            "turn_share_sync",
         }
-        assert len(jobs) == len(JOBS) == 18
+        # 数量不写死（集合契约已锁内容）：写死数字只会让每次加任务多一处红
+        assert len(jobs) == len(JOBS)
 
         def field_value(trigger, name):
             for f in trigger.fields:
@@ -259,9 +282,9 @@ class TestScheduler:
                     return str(f)
             return ""
 
-        assert field_value(jobs["morning_screen"].trigger, "hour") == "9"
-        assert field_value(jobs["morning_screen"].trigger, "minute") == "25"
-        assert field_value(jobs["noon_screen"].trigger, "hour") == "11"
+        # 2026-11-01：盘前选股提前到 08:15 —— P90 54 分钟，09:25 起跑要跑到 10:18
+        assert field_value(jobs["morning_screen"].trigger, "hour") == "8"
+        assert field_value(jobs["morning_screen"].trigger, "minute") == "15"
         assert field_value(jobs["afternoon_full"].trigger, "hour") == "15"
         assert field_value(jobs["afternoon_full"].trigger, "minute") == "30"
 
@@ -286,6 +309,24 @@ class TestScheduler:
         assert hhmm("snapshot_flow") < hhmm("ai_mark_nav") < hhmm("ai_daily_round"), (
             "记净值必须在快照之后、决策轮之前")
 
+    def test_ai_close_runs_settle_then_nav(self, monkeypatch):
+        """合并不等于"只跑一半"：`ai_close` 必须**先结算、再记净值**。
+
+        2026-11-01 把 `ai_settle_close`(15:05) 与 `ai_mark_nav`(15:52) 合并成一条
+        （都是纯账本、零 LLM，且都要"当日收盘价可用"之后才成立）。合并最危险的
+        失败形态是"只留了其中一个调用"—— 功能静默少一半，而排期表看起来完全正常。
+        这正是本项目"验函数 ≠ 验接线"的老坑，所以用调用序列把它钉死。
+        """
+        from core import scheduler as S
+        calls = []
+        monkeypatch.setattr(S, "run_ai_settle_job",
+                            lambda desc, phase=None: calls.append(("settle", phase)))
+        monkeypatch.setattr(S, "run_ai_mark_nav_job",
+                            lambda desc: calls.append(("nav", None)))
+        S.run_job("ai_close", "AI交易联赛·收盘结算+净值", force=True)
+        assert calls == [("settle", "close"), ("nav", None)], \
+            f"合并任务必须两步都跑、且结算在前（净值要反映结算后的持仓），实际 {calls}"
+
     def test_weekday_only(self):
         """除新闻采集外，所有任务都限交易日（mon-fri）。
 
@@ -298,11 +339,14 @@ class TestScheduler:
         scheduler = create_scheduler()
         news_job_ids = {jid for jid, _c, m, _d in JOBS if m == "news"}
         for job in scheduler.get_jobs():
+            txt = str(job.trigger)
             if job.id in news_job_ids:
-                assert "mon-fri" not in str(job.trigger), \
-                    f"{job.id} 应每天跑（新闻与交易日无关）"
-            else:
-                assert "mon-fri" in str(job.trigger)
+                assert "mon-fri" not in txt, f"{job.id} 应每天跑（新闻与交易日无关）"
+                continue
+            # 2026-11-01：`alpha_decay` 改周频（仅周五）⇒ 判据从"必须 mon-fri"
+            # 放宽为"**不许落在周末**"：周频任务是合法形态，但落周末一定是写错了。
+            assert "sat" not in txt and "sun" not in txt, \
+                f"{job.id} 不应在周末跑：{txt}"
 
     def test_run_job_survives_pipeline_crash(self, tmp_path, caplog):
         """pipeline 崩溃不应炸掉调度线程"""

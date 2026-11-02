@@ -86,6 +86,66 @@ def _load_name_cache() -> dict | None:
         return None
 
 
+def _collect_names(rows, code_keys, name_keys) -> tuple[dict, set]:
+    """从 DataFrame/字典行里抽 `{简称: 代码}` 与代码集合（列名因交易所而异）。"""
+    names, codes = {}, set()
+    for r in rows:
+        code = ""
+        for k in code_keys:
+            v = r.get(k) if hasattr(r, "get") else None
+            if v not in (None, ""):
+                code = str(v).strip()
+                break
+        name = ""
+        for k in name_keys:
+            v = r.get(k) if hasattr(r, "get") else None
+            if v not in (None, ""):
+                name = _norm(str(v))
+                break
+        if not code:
+            continue
+        codes.add(code)
+        if len(name) >= _MIN_NAME_LEN and "退" not in name:
+            names[name] = code
+    return names, codes
+
+
+def _fetch_name_map() -> tuple[dict, set, str]:
+    """拉全市场名称表（**主源失败自动降级到分交易所接口**）。
+
+    ⚠️ 2026-10-29 实测：`stock_info_a_code_name()` 会因上游返回的 Excel 无法被
+    pandas 识别引擎而整表失败（`Excel file format cannot be determined`），
+    而它每次要翻 18 页、约 77s —— 一旦失败，情绪面名称表就退回**覆盖不全**的快照。
+    分交易所接口（沪主板/沪科创/深A/北交所）是 JSON/网页表格，合计同样 5,500+ 只，
+    且单次 1~2s，作为降级源比"用快照凑"可靠得多。
+    """
+    import akshare as ak
+    try:
+        df = ak.stock_info_a_code_name()
+        names, codes = _collect_names(df.to_dict("records"), ("code",), ("name",))
+        if codes:
+            return names, codes, "akshare.stock_info_a_code_name"
+        raise ValueError("主源返回 0 只")
+    except Exception as primary_err:                         # noqa: BLE001
+        _logger.warning("[情绪面] 主名称源失败，降级到分交易所接口: %s", primary_err)
+
+    frames = [
+        (ak.stock_info_sh_name_code(symbol="主板A股"), ("证券代码",), ("证券简称",)),
+        (ak.stock_info_sh_name_code(symbol="科创板"), ("证券代码",), ("证券简称",)),
+        (ak.stock_info_sz_name_code(symbol="A股列表"), ("A股代码", "证券代码"), ("A股简称", "证券简称")),
+        (ak.stock_info_bj_name_code(), ("证券代码",), ("证券简称",)),
+    ]
+    names, codes = {}, set()
+    for df, code_keys, name_keys in frames:
+        n, c = _collect_names(df.to_dict("records"), code_keys, name_keys)
+        names.update(n)
+        codes |= c
+    if not codes:
+        raise ValueError("分交易所接口合计仍为 0 只")
+    _logger.info("[情绪面] 分交易所名称表合计 %d 只（主源不可用时的降级路径）", len(codes))
+    return names, codes, "akshare 分交易所(sh/sz/bj)"
+
+
 def ensure_name_cache(force: bool = False) -> dict:
     """确保全市场名称表可用（盘缓存 7 天，过期才联网）。
 
@@ -103,24 +163,13 @@ def ensure_name_cache(force: bool = False) -> dict:
         if age_days <= _NAME_TTL_DAYS and cache.get("names"):
             return cache
     try:
-        import akshare as ak
-        df = ak.stock_info_a_code_name()
-        names = {}
-        codes = set()
-        for _, r in df.iterrows():
-            code = str(r.get("code") or "").strip()
-            name = _norm(str(r.get("name") or ""))
-            if not code:
-                continue
-            codes.add(code)
-            if len(name) >= _MIN_NAME_LEN and "退" not in name:
-                names[name] = code
-        cache = {"fetched_at": time.time(), "source": "akshare.stock_info_a_code_name",
+        names, codes, source = _fetch_name_map()
+        cache = {"fetched_at": time.time(), "source": source,
                  "count": len(codes), "names": names, "codes": sorted(codes)}
         os.makedirs(os.path.dirname(_NAME_CACHE), exist_ok=True)
         with open(_NAME_CACHE, "w", encoding="utf-8") as f:
             json.dump(cache, f, ensure_ascii=False)
-        _logger.info("[情绪面] 名称表刷新：%d 只（%s）", len(codes), cache["source"])
+        _logger.info("[情绪面] 名称表刷新：%d 只（%s）", len(codes), source)
         return cache
     except Exception as e:                                   # noqa: BLE001
         _logger.warning("[情绪面] 名称表联网刷新失败，退回上次缓存/快照: %s", e)

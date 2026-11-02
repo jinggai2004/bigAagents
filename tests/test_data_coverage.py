@@ -16,13 +16,18 @@ import os
 import sys
 
 import pytest
-from streamlit.testing.v1 import AppTest
 
 from tests.conftest import use_template_db
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _ROOT)
 PAGE = os.path.join(_ROOT, "ui", "pages", "7_⚙️_系统配置.py")
+
+# 2026-11-01：Streamlit 界面已归档（archive/legacy_streamlit_20261101/ui/）。
+# 只跳过页面展示用例；覆盖率计算本身的用例照常跑（它们不碰页面）。
+_UI_RETIRED = not os.path.exists(PAGE)
+ui_retired = pytest.mark.skipif(_UI_RETIRED,
+                                reason="Streamlit 界面已归档，页面级用例停用")
 
 DAY = "2026-10-16"
 
@@ -237,6 +242,7 @@ class TestSnapshotWiring:
 # 3. 健康页展示
 # ================================================================
 
+@ui_retired
 class TestHealthPageShowsCoverage:
     @pytest.fixture(autouse=True)
     def page_env(self, tmp_path, monkeypatch):
@@ -259,6 +265,8 @@ class TestHealthPageShowsCoverage:
 
     def _open(self, monkeypatch, section=None):
         self._stub_health(monkeypatch)
+        # ⚠️ 2026-11-01：`AppTest` 局部导入（Streamlit 已从依赖移除，见文件头说明）
+        from streamlit.testing.v1 import AppTest
         at = AppTest.from_file(PAGE, default_timeout=120)
         at.run()
         if section is not None:

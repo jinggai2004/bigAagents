@@ -180,6 +180,14 @@ class RuleSignalGenerator:
         _log.info(f"预加载 {len(WATCHLIST)} 只股票日线数据...")
         preload_start_str = required_start.strftime("%Y%m%d")
         end_clean = end_date.replace("-", "")
+        # ⚠️ 宇宙守卫（2026-10-31）：跨到"上市不满一年/北交所开市前"的行不可比
+        #    （停牌跨段量出的收益是复牌跳空，实测能造出 +142%/月）。
+        #    这个脚本被 `pipeline.run_backtest` 直接调用，是**线上盘后回测**的入口，
+        #    所以守卫必须在这里，而不是只加在研究脚本里。
+        from core import universe_guard as _ug
+        guarded = _ug.guard_enabled()
+        trimmed_rows = 0
+        unevaluable: list[str] = []
         success = 0
         for code in WATCHLIST:
             try:
@@ -187,12 +195,24 @@ class RuleSignalGenerator:
                 if df is not None and not df.empty:
                     df["date"] = pd.to_datetime(df["date"])
                     df = df.sort_values("date").reset_index(drop=True)
+                    if guarded:
+                        df, cut = _ug.trim_with_stats(df, code)
+                        trimmed_rows += cut
+                        if len(df) == 0:
+                            # 不是"取数失败"，是这段区间对该票不可比 —— 分开记，
+                            # 否则日志会把它和网络问题混成一类
+                            unevaluable.append(code)
+                            continue
                     self._data_cache[code] = df
                     success += 1
                 else:
                     _log.warning(f"  {code}: 无数据，跳过")
             except Exception as e:
                 _log.warning(f"  {code}: 拉取失败 ({e})，跳过")
+        if guarded and (trimmed_rows or unevaluable):
+            _log.info(f"宇宙守卫：剪掉 {trimmed_rows} 行历史，" +
+                      (f"{len(unevaluable)} 只整段不可比（{','.join(unevaluable[:5])}）"
+                       if unevaluable else "无整段不可比标的"))
         _log.info(f"预加载完成: {success}/{len(WATCHLIST)} 只成功")
         # 记录**请求区间**（即使部分标的取数失败也算覆盖过——失败标的已在 _data_cache 里缺席，
         # 重试一次网络也未必成功，反而会把每次调用都变成一次全量重拉）

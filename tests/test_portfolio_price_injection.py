@@ -28,6 +28,15 @@ from unittest.mock import MagicMock
 
 from tests.conftest import use_template_db
 
+# 2026-11-01：Streamlit 界面已归档（archive/legacy_streamlit_20261101/ui/）。
+# 末尾的页面级用例在页面文件缺失时跳过；前三条语义（prices 透传 / 回落 /
+# active_codes 不取价）是 `core.portfolio` 的守护，不受影响。
+from pathlib import Path
+
+_UI_PAGE = Path(__file__).resolve().parents[1] / "ui" / "pages" / "6_💼_持仓.py"
+_ui_retired = pytest.mark.skipif(not _UI_PAGE.exists(),
+                                 reason="Streamlit 界面已归档，页面级用例停用")
+
 DAY = "2026-10-13"
 
 
@@ -138,6 +147,7 @@ class TestActiveCodes:
         assert pm.active_codes() == []
 
 
+@_ui_retired
 class TestWatchPageUsesBatchQuotes:
     """持仓页：**一次渲染只批量取一次行情**（其余调用全部透传）。"""
 

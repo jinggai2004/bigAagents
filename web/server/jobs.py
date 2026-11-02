@@ -313,11 +313,27 @@ def run_analysis(code: str, force: bool = False) -> dict:
             "percent": 0.0,
             "message": "判市场状态 / 取行情（这一步通常 1~4 分钟，无中间进度）",
         })
+        _step_clock = {"t": None, "node": None, "done": []}   # 节点计时（进度加权用）
 
         def on_step(node_name, final_state, step_idx):
             from core.analysis_history import snapshot_from_state
+            from core import node_timing
+            import time as _time
+            # ── 按耗时加权（2026-10-31）：等分 `step_idx/NODE_STEPS` 的问题——
+            #    取数节点 44~260s、评分节点毫秒级 ⇒ 前一格走掉 90% 真实时间，
+            #    后 14 格瞬间跳完。改用各节点历史均耗时（EWMA 台账）计进度；
+            #    首次运行无台账 ⇒ 回退等分（冷启动无害）。
+            now = _time.monotonic()
+            if _step_clock["node"] is not None:
+                node_timing.record(_step_clock["node"], now - _step_clock["t"])
+            _step_clock["t"], _step_clock["node"] = now, node_name
+            _step_clock["done"].append(node_name)
+            pct = node_timing.weighted_percent(_step_clock["done"],
+                                               analysis_runner.NODE_STEPS)
+            if pct is None:
+                pct = min(step_idx / analysis_runner.NODE_STEPS, 1.0) * 100
             progress({
-                "percent": min(step_idx / analysis_runner.NODE_STEPS, 1.0) * 100,
+                "percent": pct,
                 "message": f"步骤 {step_idx}: {node_name}",
                 "node": node_name,
                 "snapshot": snapshot_from_state(final_state),

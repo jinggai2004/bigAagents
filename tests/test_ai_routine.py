@@ -769,3 +769,101 @@ class TestActionGate(TestRunDue):
             quotes={}, candidates=[], trail=[], armed=[])
         assert "三层价位" in txt, txt
         assert "每轮至少要有一件实质动作" in txt, txt
+
+
+class _CaptureClient:
+    """同 `_FakeClient`，但**留下收到的 prompt**：留言板测试要验证"它真的读到了"。"""
+
+    def __init__(self, payload):
+        self.payload = payload
+        self.prompts = []
+
+    def call_api(self, messages, **kw):
+        self.prompts.append(messages[-1]["content"] if messages else "")
+        return json.dumps(self.payload, ensure_ascii=False)
+
+
+class TestOwnerMessages:
+    """留言板（M4#1，2026-10-30）：人对它下指令 → 下一轮**必跑、必回应、跑完销账**。
+
+    守的三条（缺任何一条，"留言"就是又一个看不见的黑洞）：
+      1. 有留言 ⇒ 不被 worth_llm 的"市场安静"否决（否则永远读不到）；
+      2. prompt 里真的出现留言原文与"必须逐条回应"的纪律；
+      3. 值班轮**真跑了 LLM** 才消费（跳过轮不消费 = 读了没回）。
+    """
+
+    # 10:20 班次窗口内；09:40 已跑过 ⇒ 距上轮 45 分钟 < 80 ⇒ 安静市场必跳过
+    NOW = datetime(2026, 10, 27, 10, 25)
+    Q = {"600519": {"code": "600519", "name": "测试股份", "price": 10.0,
+                    "prev_close": 10.0, "change_pct": 0.2,
+                    "high": 10.05, "low": 10.0, "volume_hand": 200000.0,
+                    "amount_wan": 80000.0}}
+
+    def _seed(self, monkeypatch):
+        from core import ai_personas
+        from core import ai_wake
+        from db import store
+        ai_personas.invalidate()
+        p = dict(ai_personas.get_persona("ai_ashen"))
+        p["autonomy"] = "L2"
+        monkeypatch.setattr(ai_personas, "get_persona",
+                            lambda name: p if name == "ai_ashen" else None)
+        # ⚠️ 不许耦合真实环境：生产库里若恰有已武装条件，worth_llm 会因它必跑，
+        #    "安静市场照旧跳过"这条对照用例就失效了（TestWorthLLM 同款处理）。
+        monkeypatch.setattr(ai_wake, "armed_codes", lambda *a, **kw: [])
+        store.save_routine_run("ai_ashen", "2026-10-27", "09:40", status="ok",
+                               llm_called=True, summary="开盘定性")
+        return p
+
+    def test_pending_message_forces_run_and_gets_consumed(self, tpl_db, monkeypatch):
+        from db import store
+        self._seed(monkeypatch)
+        store.add_ashen_message("盯住伊利，跌破 28 告诉我理由")
+        cap = _CaptureClient({"actions": [], "summary": "收到留言：已为伊利挂 28 元条件"})
+        out = R.run_due(self.Q, now=self.NOW, execute=False,
+                        client_factory=lambda _p: cap)
+        assert out.get("llm_called") is True, out
+        assert "老板的留言" in cap.prompts[-1], "它没读到留言"
+        assert "盯住伊利" in cap.prompts[-1]
+        assert "set_wake" in cap.prompts[-1], "留言纪律里必须点名 set_wake"
+        rows = store.list_ashen_messages()
+        assert rows[0]["status"] == "consumed"
+        assert rows[0]["round_slot"] == "10:20"
+        assert "收到留言" in (rows[0]["round_summary"] or "")
+
+    def test_quiet_without_message_still_skips(self, tpl_db, monkeypatch):
+        """对照：没有留言时，安静市场照旧跳过（证明上面的放行**不是恒真**）。"""
+        from db import store
+        self._seed(monkeypatch)
+        out = R.run_due(self.Q, now=self.NOW)
+        assert out.get("llm_called") is False and out.get("skipped"), out
+
+    def test_error_round_does_not_consume(self, tpl_db, monkeypatch):
+        """LLM 轮失败 ⇒ 留言留在 pending，下一轮补上（失败轮没有 summary 可回）。"""
+        from db import store
+
+        class _Err:
+            def call_api(self, messages, **kw):
+                raise RuntimeError("llm down")
+
+        self._seed(monkeypatch)
+        store.add_ashen_message("盯住伊利")
+        out = R.run_due(self.Q, now=self.NOW, execute=False,
+                        client_factory=lambda _p: _Err())
+        # 失败轮以 skipped 返回（llm_called=True 表示"尝试过"），但**没有 status=ok 的落库**
+        assert "LLM 调用失败" in str(out.get("skipped")), out
+        rows = store.list_ashen_messages()
+        assert rows[0]["status"] == "pending", "失败轮不该消费留言"
+        assert rows[0]["round_summary"] in (None, "")
+
+    def test_prompt_renders_owner_message_section(self, tpl_db):
+        from db import store
+        store.add_ashen_message("别追高，等回踩")
+        p = R.build_prompt(now=self.NOW, slot="10:20", level="L2",
+                           auton_desc="", budget_desc="上限 8%", cash=1_000_000.0,
+                           nav=1_000_000.0, holdings=[], my_watch=[],
+                           user_watch=[], quotes={},
+                           owner_messages=store.pending_ashen_messages())
+        assert "老板的留言（1 条" in p
+        assert "别追高" in p
+        assert "set_wake" in p

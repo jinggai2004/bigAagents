@@ -20,7 +20,8 @@ _logger = logging.getLogger(__name__)
 #    这里 **re-export** 全部原名，保证既有 import / mock.patch 路径零改动。
 from core.agent_tools_base import _tool, _now    # noqa: F401
 from core.agent_tools_fin import (               # noqa: F401
-    tool_financials, _FIN_FIELDS, _FIN_EQUITY_CANDIDATES,
+    tool_financials, tool_fin_disclosures,
+    _FIN_FIELDS, _FIN_EQUITY_CANDIDATES,
     _FIN_NOT_IN_STATEMENTS, _FIN_CORE_LABELS, _num,
     _fin_period_key, _fin_rows, _fin_series,
     _quarter_of, _prev_quarter_key, _single_quarter,
@@ -1067,11 +1068,26 @@ TOOL_SCHEMAS = [
         "name": "tool_financials",
         "description": "个股财务报表：营业收入/净利润/资产总计/负债合计/权益等关键科目（亿元）+ "
                        "同比增速 + 资产负债率/净利率/ROE。问'基本面/业绩/财务怎么样/值不值得投资'时用它；"
-                       "注意不良贷款率、净息差等银行专项指标不在三表内，工具会标明取不到",
+                       "注意不良贷款率、净息差等银行专项指标不在三表内，工具会标明取不到。"
+                       "返回值带**公告日**（每期财报实际公布的日子）；分析历史某天的情况时必须传 as_of，"
+                       "否则会把当时还没公布的财报当成已知（前视偏差）",
         "parameters": {"type": "object", "properties": {
             "symbol": {"type": "string", "description": "6位股票代码"},
-            "periods": {"type": "integer", "description": "返回期数 1~8，默认4（最近报告期在前）"}},
+            "periods": {"type": "integer", "description": "返回期数 1~8，默认4（最近报告期在前）"},
+            "as_of": {"type": "string",
+                      "description": "PIT防前视：YYYY-MM-DD。只返回该日之前**已公布**的财报；"
+                                     "看'现在'不要传，复盘/历史分析必须传"}},
             "required": ["symbol"]}}},
+    {"type": "function", "function": {
+        "name": "tool_fin_disclosures",
+        "description": "查财报**公告日**（PIT）：某只票每期财报何时公布、财报季披露进度。"
+                       "答'这份财报什么时候出的/当时能看到吗/披露到哪了'时用；"
+                       "code 为空给全市场已回填报告期概况",
+        "parameters": {"type": "object", "properties": {
+            "code": {"type": "string", "description": "6位股票代码，可选"},
+            "period": {"type": "string", "description": "报告期 YYYYMMDD（如20260630），可选"},
+            "as_of": {"type": "string", "description": "只看该日（YYYY-MM-DD）前已公告的记录，可选"}},
+            "required": []}}},
     {"type": "function", "function": {
         "name": "tool_latest_news",
         "description": "最近财经新闻/公告（传 code 时按个股直查东财，未命中回落本地快讯库；含情绪标签与关联股票）。用户问新闻/消息面/利好利空/今天最新时使用，此时不要传keyword",
@@ -1211,7 +1227,8 @@ TOOL_SCHEMAS = [
     {"type": "function", "function": {
         "name": "tool_data_freshness",
         "description": "数据新鲜度总览：今天/最近交易日、本地面板覆盖多少只票、面板市场级最新日、"
-                       "各数据集覆盖率。用户问'数据是不是最新的/数据到哪天了'时使用。"
+                       "各数据集覆盖率、**财报公告日(PIT)覆盖了几期**。"
+                       "用户问'数据是不是最新的/数据到哪天了/财报季披露到哪了'时使用。"
                        "⚠️ 口径：个股新鲜度基准=面板市场级最新日(manifest的date_max)不是今天；"
                        "最新日之后没有数据是'缺'不是'0'",
         "parameters": {"type": "object", "properties": {}, "required": []}}},
@@ -1268,6 +1285,7 @@ TOOL_FUNCS: dict[str, Callable] = {
     "tool_backtest_summary": tool_backtest_summary,
     "tool_manage_watchlist": tool_manage_watchlist,
     "tool_financials": tool_financials,
+    "tool_fin_disclosures": tool_fin_disclosures,
     "tool_latest_news": tool_latest_news,
     "tool_similar_days": tool_similar_days,
     "tool_backfill_similar_history": tool_backfill_similar_history,

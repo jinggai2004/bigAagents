@@ -11,7 +11,6 @@
     "agents.risk_manager": "deepseek-v4-flash",
     "agents.portfolio_manager": "deepseek-v4-flash",
     "news_industry.review": "qwen3.7-flash",
-    "ui.zhihu_summary": "qwen3.7-flash",
     "nl_screener.parse": "deepseek-v4-flash",
     "config.test": "deepseek-v4-flash",
     "chat.tool_loop": "deepseek-v4-flash",

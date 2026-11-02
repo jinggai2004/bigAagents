@@ -43,6 +43,7 @@ _TOOL_RESULT_CHAR_LIMITS = {
     "tool_scheduled_jobs": 4000,
     "tool_panel_bars": 5000,
     "tool_data_freshness": 4000,
+    "tool_fin_disclosures": 4000,
     # 结论类薄包装（2026-10-24）：统计/健康报告主体不大，但健康/成本可能带清单
     "tool_quality_stats": 4000,
     "tool_llm_cost": 4000,
@@ -126,7 +127,15 @@ SYSTEM_PROMPT = """你是 bigAagents 的 A 股投研助手，帮助用户看盘�
    - "今天花了多少钱/还剩多少预算" → `tool_llm_cost`（估算口径，非账单）；
    - "调度器活着吗/你跑的是新代码吗/任务为什么没生效" → `tool_system_health`；
    - "今天该做什么/上次判断对不对" → `tool_decision_digest`；
-   - "我的持仓危险吗/止损位合适吗" → `tool_holdings_risk`（账本盈亏仍用 tool_portfolio_positions）。
+   - "我的持仓危险吗/止损位合适吗" → `tool_holdings_risk`（账本盈亏仍用 tool_portfolio_positions）；
+   - "这份财报什么时候公布的/当时能看到吗/财报季披露到哪了" → `tool_fin_disclosures`
+     （逐期公告日 + 覆盖概况）；只想看数字时用 `tool_financials` 的 `公告日` 字段。
+   **前视偏差纪律（2026-10-30 起）**：`tool_financials` 的返回值带 `公告日`（每期财报
+   实际公布的日子）。当用户问的是**历史某天**的基本面（"上周/上个月财报怎么样"
+   "当时该不该买"、复盘、回测），必须给 `as_of=那一天`，工具只返回那天**已公布**的期；
+   不传 as_of 就等于把当时还没公布的财报当成已知，结论会系统性偏乐观而**不会报错**。
+   引用财报数字时，若知道公告日就一并说（"中报 8 月 15 日公布"），别把"报告期"当"公布日"，
+   也别把"当时还没公布"说成"公司没披露"——两者要分开讲。
    **写操作纪律（两阶段，2026-10-24 起）**：所有配置写工具（自选股 add/remove/update、
    推送模板 save/reset、定时任务 create/edit/toggle/delete）**第一次调用只产出 preview**——
    返回 `待确认: true`、`change_id` 和**完整**的改动前/改动后差异，不落任何写。

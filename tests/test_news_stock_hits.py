@@ -78,3 +78,56 @@ class TestStoreAccumulates:
         store.upsert_news_stock_hits([dict(base, stock_code="600028", hits=5)])
         assert [r["stock_code"] for r in store.load_news_stock_hits("2026-10-23", min_hits=3)] \
             == ["600028"]
+
+
+class TestNameCacheFallback:
+    """名称表主源失败时必须降级到分交易所接口（2026-10-29）。
+
+    实测事故：`stock_info_a_code_name()` 因上游 Excel 无法识别引擎整表失败
+    （`Excel file format cannot be determined`），而它是 7 天 TTL 的唯一刷新源
+    ⇒ 到期那天名称表直接退回覆盖不全的快照，情绪面选股会静默漏掉创业板/北交所。
+    """
+
+    def test_split_sources_used_when_primary_fails(self, tmp_path, monkeypatch):
+        import pandas as pd
+        import akshare as ak
+
+        monkeypatch.setattr(H, "_NAME_CACHE", str(tmp_path / "names.json"))
+
+        def _boom():
+            raise ValueError("Excel file format cannot be determined")
+
+        monkeypatch.setattr(ak, "stock_info_a_code_name", _boom)
+        monkeypatch.setattr(ak, "stock_info_sh_name_code",
+                            lambda symbol="主板A股": pd.DataFrame(
+                                {"证券代码": ["600028"], "证券简称": ["中国石化"]}))
+        monkeypatch.setattr(ak, "stock_info_sz_name_code",
+                            lambda symbol="A股列表": pd.DataFrame(
+                                {"A股代码": ["300750"], "A股简称": ["宁德时代"]}))
+        monkeypatch.setattr(ak, "stock_info_bj_name_code",
+                            lambda: pd.DataFrame(
+                                {"证券代码": ["920001"], "证券简称": ["北交测试"]}))
+
+        cache = H.ensure_name_cache(force=True)
+        assert cache["source"].startswith("akshare 分交易所")
+        assert cache["names"]["宁德时代"] == "300750"
+        assert cache["names"]["中国石化"] == "600028"
+        assert {"600028", "300750", "920001"} <= set(cache["codes"])
+
+    def test_falls_back_to_cache_when_all_sources_fail(self, tmp_path, monkeypatch):
+        import akshare as ak
+
+        cache_path = tmp_path / "names.json"
+        cache_path.write_text('{"fetched_at": 0, "names": {"宁德时代": "300750"}, '
+                              '"codes": ["300750"], "count": 1}', encoding="utf-8")
+        monkeypatch.setattr(H, "_NAME_CACHE", str(cache_path))
+
+        def _boom(*a, **kw):
+            raise RuntimeError("network down")
+
+        for fn in ("stock_info_a_code_name", "stock_info_sh_name_code",
+                   "stock_info_sz_name_code", "stock_info_bj_name_code"):
+            monkeypatch.setattr(ak, fn, _boom)
+
+        cache = H.ensure_name_cache(force=True)
+        assert cache["names"]["宁德时代"] == "300750", "失败时必须退回上次缓存"

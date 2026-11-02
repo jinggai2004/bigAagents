@@ -315,8 +315,43 @@ def _a_share_code(code: str) -> tuple[bool, str]:
     return True, ""
 
 
+def _guess_name_local(code: str) -> str:
+    """从本地 `market_snapshot` 查名称（即时、全市场、**零网络**）。
+
+    快照每天盘后落库一次（5,500+ 只，含 `stock_name`），对"加自选"这种
+    写路径来说，本地命中就是最优解；本地没有（新股/长期停牌未进快照）
+    才值得为它发一次网络请求。
+    """
+    try:
+        from db import store
+        conn = store.get_connection()
+        try:
+            row = conn.execute(
+                "SELECT stock_name FROM market_snapshot "
+                "WHERE stock_code = ? AND stock_name IS NOT NULL "
+                "AND TRIM(stock_name) != '' "
+                "ORDER BY snapshot_date DESC LIMIT 1",
+                (str(code),)).fetchone()
+            return str(row["stock_name"]).strip() if row else ""
+        finally:
+            conn.close()
+    except Exception as e:                     # noqa: BLE001
+        _logger.warning("[watch] 本地名称查询失败 %s: %s: %s",
+                        code, type(e).__name__, e)
+        return ""
+
+
 def _guess_name(code: str) -> str:
-    """用行情源补一次名称。失败返回空串——**名字缺失不该阻止写入**。"""
+    """补名称：**本地快照优先**，网络只兜底。失败返回空串——名字缺失不该阻止写入。
+
+    ⚠️ 为什么必须本地优先（2026-10-30 事故）：`realtime.get_realtime_quotes`
+    两源各 `timeout=10`，网络瞬时挂起（DNS/代理切换）时 **add 自选卡 26 秒**，
+    页面按钮一直转圈，体感就是"卡死"。而 `market_snapshot` 里有全市场名称，
+    本地查询毫秒级返回——加自选这个动作**根本不该等网络**。
+    """
+    local = _guess_name_local(code)
+    if local:
+        return local
     if _offline():
         return ""
     try:

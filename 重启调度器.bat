@@ -6,7 +6,7 @@ chcp 65001 >nul
 
 title bigAagents 调度器重启器
 
-rem 用途：只重启定时调度器，不影响已运行的 Web 界面（streamlit）
+rem 用途：只重启定时调度器，不影响已运行的界面（exe 提供，Streamlit 已归档）
 
 rem 场景：改了 core/scheduler.py 等调度相关代码后，必须重启才能生效
 
@@ -18,7 +18,7 @@ rem 注意：本项目必须用装了 pytest 的解释器（系统 Python 3.12�
 rem       托管版 3.13 没有 pytest，被选中会出现"命令能跑但测试收集失败"。
 set "PY=%BIGA_PYTHON%"
 if defined PY if not exist "%PY%" ( echo [警告] BIGA_PYTHON 指向的路径不存在，已忽略: %PY% & set "PY=" )
-if not defined PY set "PY=C:\Users\OMEN\AppData\Local\Programs\Python\Python312\python.exe"
+if not defined PY set "PY=%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
 if not exist "%PY%" set "PY="
 rem ⚠️ 回退到 py 启动器时必须取它的**真实 exe 路径**：
 rem   若写成 PY="py -3"，后面 "%PY%" 会展开成 "py -3"，cmd 会去找一个

@@ -17,7 +17,6 @@ import os
 import sys
 
 import pytest
-from streamlit.testing.v1 import AppTest
 
 from tests.conftest import use_template_db
 
@@ -112,6 +111,15 @@ def page(tmp_path, monkeypatch):
 
 
 def _open_page():
+    # 2026-11-01：Streamlit 界面已归档（archive/legacy_streamlit_20261101/ui/）。
+    # 页面文件不存在 ⇒ 页面级用例自动跳过；本文件的纯逻辑用例（TestLevelSanity）
+    # 与界面无关，必须继续跑（它们是"价位合法性"的唯一守护）。
+    if not os.path.exists(PAGE):
+        pytest.skip("Streamlit 界面已归档，页面级用例停用")
+    # ⚠️ 2026-11-01：`AppTest` 改**局部导入** —— Streamlit 已从依赖里移除
+    #    （界面层归档），顶层 import 会让整个测试文件在收集期 ModuleNotFoundError。
+    #    放在 skip 之后：界面不在时连 import 都不发生。
+    from streamlit.testing.v1 import AppTest
     at = AppTest.from_file(PAGE, default_timeout=120)
     at.run()
     assert not at.exception, [str(e.value) for e in at.exception]

@@ -24,29 +24,23 @@ from core import scheduled_jobs as SJ
 
 DAY_TICK = "intraday_watch"      # 每分钟一跳，天然重叠，不参与棘轮
 
-# 2026-10-23 实测基线（挪走 sentiment_ref 之后）。新增任务必须为零冲突；
-# 若确实要新增重叠，请在这里登记并写明理由。
-# ⚠️⚠️ 2026-10-24：把 `JOB_MODES` 的估算值按**实测**改了（`screen` 6→12 分钟、
-# `rule` 15→23 分钟），于是检测器第一次看见两处**本来就存在**的重叠：
-#   ① `morning_screen`(09:25, 实测 695.9s) × `ai_settle_open`(09:32)  —— **已修**（挪到 09:45）；
-#   ② `afternoon_full`(15:30, 实测 1371.6s) × `daily_review`(15:50) / `ai_mark_nav`(15:52)。
-# ②就是 10-23 复盘"读到上一份 daily_picks"的直接原因（复盘 15:50 起跑、盘后流程 15:52 才完），
-# 但**修它不能只挪时间**：15:30~16:00 这段已经排满，往下挪会连环撞
-# （复盘 15:53 撞净值 15:52、挪到 15:56 撞新闻评估 15:55）。
-# ⇒ 正解是 P1-3 的**提速**（选股 696s 压到 ≤240s，盘后流程整体前移），届时这里必须收紧。
-# ⚠️ 登记 ≠ 认可：这条是"已知待整改"，不是"设计如此"。
-# ✅ 2026-10-28：`backfill_screen` 从 15:36 挪到 **15:10**（原排期与复盘 15:50 撞车：
-#    实测它跑 17.5 分钟、15:53:35 才结束，而复盘 15:50 就要读回填结果 ⇒ 永远读到
-#    前一天的 T+N）。挪走后它与 `afternoon_full`(15:30)、`backfill_analysis` 都不再重叠。
+# 2026-11-01 重排后的基线：**只剩一处**，且是数据可用性决定的硬约束。
+#
+# 历史（为什么曾经有 7 条）：估算值长期低估 —— `screen` 写 12 分钟（实测 P90 53.5）、
+# `rule` 写 23 分钟（实测 P90 57.4）。检测器按 23 分钟算，于是 15:50 的复盘看起来
+# "排得开"，实际盘后全流程 P90 要跑到 16:28 ⇒ 15:40~16:30 的七个任务全部压在它身上。
+# 2026-11-01 做三件事把它清掉：① 删掉重复的第三次全市场选股（noon_screen）；
+# ② 回填挪出盘后窗口（backfill_screen→13:30、backfill_analysis→15:22）；
+# ③ 下游一律排到 `afternoon_full` 的 **P90（15:30+58=16:28）之后**。
+#
+# ⚠️ 保留的这一条：`snapshot_flow`(15:40) 必须晚于"当日日线可用"（Tushare daily
+#    收盘后约半小时才出，再早就只能拿昨天数据，10-29 实测踩过 TushareStaleData），
+#    而 `afternoon_full`(15:30, P90 58 分钟) 又不能更早（它同样要当日收盘价）。
+#    两者重叠约 10 分钟，都是 I/O 型、锁不同 ⇒ **接受并登记**，不再"挪时间"。
+#    要消掉它只能给快照换数据源，属于另一件事。
 KNOWN_CONFLICTS = {
-    "afternoon_full": ["ai_mark_nav", "backfill_analysis",
-                       "daily_review", "snapshot_flow"],
-    "backfill_analysis": ["afternoon_full"],
+    "afternoon_full": ["snapshot_flow"],
     "snapshot_flow": ["afternoon_full"],
-    "daily_review": ["afternoon_full", "ai_mark_nav"],
-    "ai_mark_nav": ["afternoon_full", "daily_review", "news_review"],
-    "news_review": ["ai_daily_round", "ai_mark_nav"],
-    "ai_daily_round": ["news_review"],
 }
 
 
@@ -108,30 +102,44 @@ class TestScheduleConflictRatchet:
             f"情绪采集 {s} 必须早于复盘 {r}，否则复盘永远读到前一天"
 
     def test_morning_screen_has_no_conflict(self):
-        """⭐ 2026-10-24：盘前选股与开盘结算**每天重叠 5 分钟**（选股实测 696s，
-        09:25 跑到 09:36:36，而结算排在 09:32）。修法是把结算挪到 09:45。
+        """⭐ 盘前选股必须**独占**它那一段，且真的在开盘前跑完。
 
-        这条用例的存在意义：当时检测器**看不见**它，因为
-        `JOB_MODES["screen"]["minutes"]` 还写着 6（"实测 256 秒"是扩池前的数据）。
+        2026-10-24 的版本：选股 09:25 起、实测 696s ⇒ 跑到 09:36，而结算排在 09:32。
+        2026-11-01 的版本更进一步：P90 实测 **53.5 分钟** ⇒ 09:25 起跑要到 10:18，
+        所以不只是"别和结算撞"，而是**必须提前到开盘前**（现在 08:15，P90 也在 09:09 前）。
         """
         assert _conflicts_of("morning_screen") == []
+        screen = _cron_of("morning_screen")
         settle = _cron_of("ai_settle_open")
         assert (settle["hour"], settle["minute"]) >= (9, 40), \
-            f"开盘结算 {settle} 太早，会与 09:25 起跑、约 09:37 结束的选股重叠"
+            f"开盘结算 {settle} 太早，会与选股的 P90 窗口重叠"
+        # 硬约束：起跑时刻 + P90 必须落在 09:30 开盘之前
+        from core.scheduled_jobs import JOB_MODES
+        end_min = screen["hour"] * 60 + screen["minute"] + JOB_MODES["screen"]["minutes"]
+        assert end_min <= 9 * 60 + 30, \
+            f"盘前选股 P90 要到 {end_min // 60}:{end_min % 60:02d}，已经开盘了"
 
     def test_estimated_minutes_not_understated(self):
-        """估算值必须 **≥ 已知实测**（估小 = 检测器失明）。
-        数值来自 `output/daily_picks/*.json` 的 `stage_timings` 与调度日志。"""
+        """估算值必须 **≥ P90 实测**（估小 = 检测器失明）。
+
+        数值来源：`logs/scheduler_*.log` 的 `═══ [任务] 完成: Ns` 行（2026-11-01 汇总）。
+        ⚠️ 过去这里锁的是"单次实测"（696s / 1371.6s），于是随着样本变慢而失效：
+        真实 P90 是 53.5 / 57.4 分钟，估算却停在 12 / 23 —— 检测器整整失明 34 分钟。
+        """
         from core.scheduled_jobs import JOB_MODES
-        # screen.run = 695.87s ≈ 11.6min；afternoon_full = 1371.6s ≈ 22.9min
-        assert JOB_MODES["screen"]["minutes"] >= 12
-        assert JOB_MODES["rule"]["minutes"] >= 23
+        # 盘前/午间选股：中位 24.9、P90 53.5（n=18）；盘后全流程：中位 21.6、P90 57.4（n=22）
+        assert JOB_MODES["screen"]["minutes"] >= 54
+        assert JOB_MODES["rule"]["minutes"] >= 58
 
     def test_ratchet_has_discriminance(self, monkeypatch):
-        """守卫的鉴别力自检：伪造一个冲突必须被抓住。"""
+        """守卫的鉴别力自检：伪造一个冲突必须被抓住。
+
+        ⚠️ 2026-11-01：原来拿 `daily_review` 当靶子，重排后它已经零冲突
+        （这正是重排的目标）⇒ 靶子换成仍然存在的那条 `afternoon_full`。
+        """
         fake = dict(KNOWN_CONFLICTS)
-        fake.pop("daily_review")
+        fake.pop("afternoon_full")
         monkeypatch.setattr("tests.test_schedule_conflicts.KNOWN_CONFLICTS", fake)
         got = _all_conflicts()
         new = {k: v for k, v in got.items() if fake.get(k) != v}
-        assert "daily_review" in new
+        assert "afternoon_full" in new

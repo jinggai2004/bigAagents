@@ -20,6 +20,16 @@ from db import store as db_store
 def temp_store(tmp_path, monkeypatch):
     from tests.conftest import use_template_db
     use_template_db(tmp_path, monkeypatch, "test_local_screen.db")
+    # 龙虎榜缓存必须指向空目录：否则会读到真实 data/panel/billboard，
+    # 该路变 ok，用例结果就随"今天有没有跑过回填"漂移（测试不得耦合真实环境）。
+    from data import billboard as _bb
+    monkeypatch.setattr(_bb, "CACHE_DIR", tmp_path / "billboard_empty")
+    monkeypatch.setattr(_bb, "ensure_days", lambda days, force=False: {})
+    # 财务目录同理：用例里造的 600000~600039 **是真实代码**，会被读到真实
+    # `data/panel/financials` ⇒ 覆盖率假的 80%，低估值成长走严格三条件后返回 0，
+    # 用例挂在一个跟被测逻辑无关的原因上。测试不得耦合真实环境。
+    import core.financial_pit as _fp
+    monkeypatch.setattr(_fp, "FIN_DIR", tmp_path / "fin_empty")
     yield
 
 
@@ -56,7 +66,8 @@ def _routes(meta):
 class TestRoutes:
 
     def test_all_routes_present_with_dragon_tiger_unavailable(self, temp_store):
-        """五路都要出现；龙虎榜**显式 unavailable**（无数据源）"""
+        """五路都要出现；龙虎榜不可用时**必须显式说明**（2026-11-01 已补数据源，
+        所以 status 在 ok/unavailable 之间取决于缓存；不可用的原则没变：不许静默跳过）"""
         from core.local_screen import run_local_strategies
         _seed_market([{"code": "600001", "name": "甲", "pe": 10, "cap_yi": 300,
                        "turnover": 2, "amount_yi": 5, "change_pct": 1.0}])
@@ -64,10 +75,12 @@ class TestRoutes:
         res = run_local_strategies()
         r = _routes(res["meta"])
         assert set(r) == {"主力资金", "低估值成长", "技术突破", "行业龙头", "龙虎榜活跃"}
-        assert r["龙虎榜活跃"]["status"] == "unavailable"
-        assert "无本地数据源" in r["龙虎榜活跃"]["note"]
-        # 一路不可用必须出现在 notes 里（不静默）
-        assert any("龙虎榜" in n for n in res["meta"]["notes"])
+        bb = r["龙虎榜活跃"]
+        assert bb["status"] in ("ok", "unavailable")
+        assert bb["note"], "无论可用与否都要说明条件/原因"
+        if bb["status"] == "unavailable":
+            # 一路不可用必须出现在 notes 里（不静默）
+            assert any("龙虎榜" in n for n in res["meta"]["notes"])
 
     def test_every_ok_route_reports_condition_difference(self, temp_store):
         """本地条件比原问财窄 → 每路都要说明差异（如缺"净利润同比/ROE"）"""
@@ -78,7 +91,9 @@ class TestRoutes:
         r = _routes(run_local_strategies()["meta"])
         for label in ("主力资金", "低估值成长", "技术突破", "行业龙头"):
             assert r[label]["note"], f"{label} 必须说明与原问财条件的差异"
-        assert "无本地数据源" in r["低估值成长"]["note"]      # 净利同比/ROE 确实没有
+        # 2026-11-01 补了成长条件；若财务源不可用必须显式标注"已降级为纯 PE"
+        note = r["低估值成长"]["note"]
+        assert ("净利同比" in note) or ("降级" in note)
         assert "MACD" in r["技术突破"]["note"]
 
     def test_original_query_kept_for_traceability(self, temp_store):

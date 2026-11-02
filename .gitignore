@@ -23,6 +23,8 @@ output/pytest_*.txt
 data/*.db
 data/backtest_records/
 data/trading_calendar.json
+# 节点耗时 EWMA（core/node_timing.py 的运行时学习产物）
+data/analysis_node_timing.json
 output/daily_picks/
 # UI 长任务的结果与运行标记（core/ui_runs.py）
 output/ui_runs/

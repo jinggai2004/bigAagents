@@ -89,3 +89,21 @@ def api_desk_ashen_chat(q: str) -> dict:
     问题长度在 `desk.ashen_chat` 里截到 600 字，URL 编码后仍远低于上限。
     """
     return desk.ashen_chat(question=q)
+
+
+@router.post("/api/desk/ashen/message")
+def api_desk_ashen_message(text: str) -> dict:
+    """给阿深留言（M4#1，2026-10-30）：进**下一值班轮的 prompt**，它必须逐条回应。
+
+    与 `/api/desk/ashen/chat` 的分工：chat 是"问它话"（只读、立刻答、不留后果），
+    message 是"给它下指令"（它下一轮必须读、必须回应、要盯价位会真的挂条件）。
+    同为字面量路径，必须注册在任何 `/api/desk/ashen/{x}` 参数路由之前。
+    用 query 参数传 text，与本项目其它 POST 端点风格一致。
+    """
+    return desk.leave_message(text=text)
+
+
+@router.get("/api/desk/ashen/messages")
+def api_desk_ashen_messages(limit: int = 20) -> dict:
+    """留言台账：pending（待它读）/ consumed（已回应，带轮次与它的原话）。"""
+    return desk.ashen_messages(limit=limit)

@@ -82,7 +82,9 @@ def test_tool_wrapper_preserves_original_signature():
     这既是可读性，也是下面第 3 组测试能自动发现"schema 声明了函数没有的参数"的前提。
     """
     sig = inspect.signature(agent_tools.tool_financials)
-    assert list(sig.parameters) == ["symbol", "periods"], (
+    # 2026-10-30 起多了 `as_of`（PIT 前视防护）。这里刻意保留**硬编码**：
+    # 签名变更必须有人来改这一行，才能逼着确认"新参数真的需要、且默认值安全"。
+    assert list(sig.parameters) == ["symbol", "periods", "as_of"], (
         f"包装后签名被抹平了: {sig} —— 请确认 _tool 用了 functools.wraps")
 
 

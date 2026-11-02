@@ -1,11 +1,24 @@
 """
 定时调度器：基于 APScheduler 的每日自动化。
 
-调度时刻（交易日，周一至周五）：
-  - 09:25  盘前选股（screen 模式，快速出候选）
-  - 11:30  午间选股复核（screen 模式）
-  - 15:30  盘后全流程（rule 模式：选股 + 规则信号回测，零 LLM 成本）
-  - 15:35  分析历史 T+N 回填（收盘价落定后补 ret_5d/ret_20d）
+调度时刻（交易日）——**完整表见下方 `JOBS`，这里只画主链**：
+  - 08:05  财报公告日刷新（PIT 前视防护的数据底座）
+  - 08:15  盘前选股（screen，P90 54 分钟 ⇒ 开盘前出结果）
+  - 09:45  AI 联赛开盘结算（T+1，按当日开盘价）
+  - 13:30  选股候选 T+N 回填（不依赖当日收盘，挪出盘后窗口）
+  - 14:40/14:45  持仓风控巡检 / 左侧监测盘中预扫
+  - 15:20  市场情绪参照采集（必须早于复盘）
+  - 15:22  分析历史 T+N 回填（含 T+5/T+20 里程碑 LLM 归因）
+  - 15:30  盘后全流程（rule：选股 + 规则回测，零 LLM；**全天最长，P90 57 分钟**）
+  - 15:40  全市场资金流/估值快照（当日日线落定后）
+  - 16:30  起 账本与报告链：AI 联赛收盘结算+净值 → 左侧监测收盘 → 复盘 →
+           新闻行业评估 → AI 联赛盘后决策轮 → 交易拥挤度（16:55）
+  - 17:05  超额衰减监控（**仅周五**）
+  - 18:10  盘后批量深度分析（DeepSeek 半价时段）
+
+⚠️ 排期纪律（2026-11-01 重排后确立）：**下游排在上游 P90 之后，不是中位、更不是
+估算**。近两周实测 P90：盘前选股 53.5 分钟、盘后全流程 57.4 分钟、午间选股 49 分钟
+——旧表按 12/23/12 分钟排，于是 15:40~16:30 的七个任务全压在盘后全流程身上。
 
 说明：
   - 交易日保护：cron 限定周一至周五，**法定节假日由 data/trading_calendar 判定**
@@ -16,6 +29,7 @@
 """
 
 import logging
+import json
 import os
 from datetime import date, datetime
 
@@ -29,93 +43,128 @@ _logger = logging.getLogger(__name__)
 
 # 任务定义: (job_id, cron 表达式, 任务类型, 描述)
 # mode/任务类型: screen / rule / review / news / snapshot / backfill(_screen) / watch
+# 任务定义: (job_id, cron 表达式, 任务类型, 描述)
+# mode/任务类型: screen / rule / review / news / snapshot / backfill(_screen) / watch …
+#
+# ⚠️⚠️ 2026-11-01 全表重排：依据是**近两周调度日志的真实耗时**，不是估算。
+#   | 任务         | 旧估算 | 中位  | P90   | 最大  | n  |
+#   | 盘前选股      | 12 分  | 24.9 | 53.5 | 54.0 | 18 |
+#   | 盘后全流程    | 23 分  | 21.6 | 57.4 | 73.4 | 22 |
+#   | 午间选股复核   | 12 分  | 11.4 | 49.0 | 75.3 | 21 |
+#   旧表把 50~57 分钟的任务当 12~23 分钟排 ⇒ 15:40~16:30 的 7 个任务**全部**
+#   落在 `afternoon_full` 的窗口内，"错峰"只存在于纸面上（实测每天挂一条
+#   "上游未就绪 afternoon_full"）。本次三件事：
+#     ① 删掉第三次全市场选股（`noon_screen`，与 morning_screen 同 mode 同产物）；
+#     ② 把不依赖当日收盘的回填挪出盘后窗口；
+#     ③ 下游一律排到上游 **P90** 之后（不是中位、更不是旧估算）。
 JOBS = [
-    ("morning_screen", dict(hour=9, minute=25), "screen", "盘前选股"),
-    ("noon_screen", dict(hour=11, minute=30), "screen", "午间选股复核"),
-    # 持仓风控巡检：放在 14:50，留出收盘前 10 分钟的决策时间 —— 而不是收盘后
-    # 才发现"今天被打穿了"。只检查**用户已录入持仓**的止损/止盈与追踪止损，
-    # 不生成交易建议；持仓为空时直接返回，不推送、不产生日志噪声。
-    # ⚠️ 新增任务后必须重启调度进程，否则健康检查的 code 段会报"跑的是旧代码"。
-    ("risk_check", dict(hour=14, minute=50), "risk", "持仓风控巡检"),
-    ("afternoon_full", dict(hour=15, minute=30), "rule", "盘后全流程(选股+回测)"),
-    ("backfill_analysis", dict(hour=15, minute=35), "backfill", "分析历史T+N回填"),
-    # 全市场资金流 + 估值截面快照落库。放在 15:40：晚于全流程、早于复盘，
-    # 使复盘与**次日盘前选股**都能读到当天快照（选股不再现场拉全市场，见 run_snapshot_job）。
-    # 估值截面（PE/市值/换手率）是**逐日积累**的：它是"六因子权重里 PE 那一项
-    # 无法验证"的前置数据，攒够几十个交易日才能算 IC（见 save_daily_market_snapshot）。
-    ("snapshot_flow", dict(hour=15, minute=40), "snapshot", "全市场资金流/估值截面快照采集"),
-    # 市场情绪参照（2026-10-23）：15:20 —— 必须**早于 15:50 的复盘**，
-    # 否则复盘读到的永远是前一天的情绪快照（`load_reference_block` 按采集日取）。
-    # 只有 1~2 个 HTTP 请求 + 零 LLM，几秒完成。
-    # ⚠️⚠️ 为什么是 15:20 而不是 15:45/15:37（2026-10-23 审查实测）：
-    #   15:45 撞 snapshot_flow（15:40 起跑、估 10 分钟）；
-    #   15:37 更糟——盘后全流程 15:30 起要跑 **22 分钟**、backfill_screen 要跑 **10 分钟**，
-    #   15:30~15:49 整段是重活区 ⇒ 15:20 是"收盘后、重活前"唯一干净的窗口。
-    #   它必须在 15:50 复盘之前完成，这才是硬约束；越靠近 15:50 越容易被挤。
-    # ⚠️ 排它的目的**不是**给人看，而是**积累历史**：相对基准要求 ≥5 个交易日，
-    #    靠用户手动开页面永远凑不齐 ⇒ 这一层会永远停在"不给分位"。
-    #    失败只记 WARNING、不推送（非公开接口随时可能失效，不该天天打扰人）。
-    ("sentiment_ref", dict(hour=15, minute=20), "sentiment", "市场情绪参照采集"),
-    # 选股候选回填单独一个任务（锁名与 analyses 不同，两者可并行不抢锁）
-    # ⚠️ D2（2026-10-18 审查）：15:50 → **15:36**。两个理由：
-    #    ① 它回填的是**历史**选股样本的 5/20 日收益（要的是"已到期的样本"），
-    #       不依赖当日收盘价 ⇒ 没必要排在收盘后；
-    #    ② 15:40 的快照要跑 9 分钟（15:40~15:49），原来 15:50 挤在它和复盘之间，
-    #       且复盘（15:45）根本看不到当天回填结果（"决策质量评估"用的永远是上一批）。
-    #    提前到 15:36 后：15:39 前完成 → 15:50 的复盘能看到当天回填。
-    # ⚠️⚠️ 2026-10-28 再提前到 **15:10**：上面那句"15:39 前完成"是**估算错了**。
-    #    实测当天 15:36:00 起跑、**15:53:35 才结束（17.5 分钟）** ⇒ 15:50 的复盘检查时
-    #    它还没写完 `runs`，于是每天挂一条「上游未就绪 ['backfill_screen']」。
-    #    慢的原因是逐条走网络拉 K 线（约 5s/条 × 200 条）。
-    #    15:10 起跑 + 17 分钟 = 15:27，距复盘 15:50 有 23 分钟余量；
-    #    且它与 `ai_settle_close`(15:05)、`sentiment_ref`(15:20) 都不重叠。
-    ("backfill_screen", dict(hour=15, minute=10), "backfill_screen", "选股候选T+N回填"),
-    # ⚠️ D2（2026-10-18 审查）：15:45 → **15:50**。快照 15:40 起跑 9 分钟（~15:49），
-    #    原来 15:45 必然与快照重叠（`find_conflicts` 早就把这个当例子写进测试）。
-    #    挪到 15:50 后 `STAGE_DEPS["daily_review"]` 的两个上游（快照 15:49、回填 15:27）
-    #    都已就绪 ⇒ 复盘的"决策质量评估"第一次能用上**当天**的样本。
-    ("daily_review", dict(hour=15, minute=50), "review", "每日复盘生成与推送"),
-    # 新闻行业利好/利空评估：15:55 —— 晚于快照(15:40)，推荐排序用得上当日资金流；
-    # 晚于复盘(15:45)避免与 LLM 重任务叠加。每天跑（周末快讯也有价值），
-    # 所以 mode 不进 _trading_day_modes。
-    ("news_review", dict(hour=15, minute=55), "news_review", "新闻行业利好/利空评估"),
-    # AI 交易联赛·盘后决策轮（2026-10-14）：晚于 15:55 新闻评估 —— 简报要读它的产物。
-    # ⚠️ **这是 JOBS 里唯一"每跑一次必花钱"的任务**（3 个 LLM persona × 最多 6 轮）。
-    #    成本实测见 output/多AI交易联赛_开发计划_2026-10-14.md；改排期前先想清楚。
-    #    随机对照组（3 个）零 LLM 成本，不受影响。
-    ("ai_daily_round", dict(hour=15, minute=58), "ai_round", "AI交易联赛·盘后决策轮"),
-    # AI 交易联赛·午间决策轮（2026-10-23 新增）：13:05。
-    # 为什么需要第二轮：配额原本 1 次/天，模型说一次"等待"当天就归零（实测 7 个交易日
-    #   3 个 LLM 人格合计只有 3 笔成交，随机组 15 笔）。两轮都在**次日开盘**结算，
-    #   等于每天最多可新增 2 批建仓，频次翻倍。
-    # 为什么放 13:05 而不是 9:20/11:35：9:20 看不到当天 9:25 的选股产物；
-    #   11:30 选股复核正在跑（算力高峰）⇒ 13:05 既避开高峰，又能用上午真实量价。
-    ("ai_midday_round", dict(hour=13, minute=5), "ai_round", "AI交易联赛·午间决策轮"),
-    # AI 联赛结算（2026-10-14，S6）：零 LLM 成本（纯账本 + 行情取数）
-    # 09:32 开盘后：把前一日（及更早）的买入决策按**当日开盘价**撮合（T+1 口径）
-    # ⚠️ 2026-10-24：09:32 → **09:45**。原时刻与 09:25 的盘前选股**每天重叠**
-    #    （选股实测 695.9s ⇒ 09:25 跑到 09:36:36），两者抢网络与 SQLite。
-    #    之前没人发现，是因为 `JOB_MODES["screen"]` 的估算值还写着 6 分钟
-    #    （扩池前的旧数据）⇒ 冲突检测器算出"09:31 就结束了"，永远不报。
-    #    挪到 09:45 **不损失任何数据**：撮合用"当日开盘价"，开盘价 09:30 就已确定。
+    # ── 早间（盘前）──────────────────────────────────────────
+    # 财报公告日刷新（PIT 前视防护，2026-10-30）：**工作日** 08:05。
+    # 必须早于 08:15 的盘前选股（后者读基本面要按 as_of 判定"当时可见"）。
+    # 为什么不进交易日闸门：公告日不依赖当日行情，节假日也会披露（周末公告在
+    #   下一个工作日一并补上——只会"晚用"不会"早用"，方向上安全）。
+    ("fin_disclosure", dict(hour=8, minute=5), "fin_disclosure", "财报公告日刷新(PIT)"),
+    # 盘前选股：**08:15**（2026-11-01，原 09:25）。
+    # 原时刻与实测严重不符：P90 53.5 分钟 ⇒ 09:25 起跑要跑到 **10:18**，即
+    #   "盘前选股"在开盘 48 分钟后才出结果，还跨过 09:45 的开盘结算。
+    # 08:15 起跑 ⇒ P90 也在 09:09 前完成，真正在开盘前给结论。
+    # 它用的是**上一交易日收盘**的全市场快照（15:40 落库），与几点执行无关。
+    ("morning_screen", dict(hour=8, minute=15), "screen", "盘前选股"),
+    # AI 联赛开盘结算（T+1）：09:45。撮合用"当日开盘价"，而开盘价 09:30 就已确定，
+    # 所以只需要"开盘之后"；原 09:32 曾与盘前选股每天重叠。
     ("ai_settle_open", dict(hour=9, minute=45), "ai_settle_open", "AI交易联赛·开盘结算(T+1)"),
-    # 15:05 收盘后：处理日内唤醒的卖出（扫描价+滑点）。
-    # ⚠️ 2026-10-15 拆出净值：原版在这里顺手 mark_nav，但 **15:05 早于当日日线可用时间**
-    #    ⇒ 取不到收盘价 ⇒ 用成本价兜底且不留痕 ⇒ 每日净值被伪装成"≈初始资金"，
-    #    喂给 AI 复盘就得出"净值不变、无盈亏"的错误结论（实测 3 个账户全 = 1,000,000 整）。
-    ("ai_settle_close", dict(hour=15, minute=5), "ai_settle_close", "AI交易联赛·收盘结算(日内卖出)"),
-    # 15:52 记当日净值：**必须在快照(15:40)之后**（快照含当日收盘价，是唯一权威来源），
-    # 且**在决策轮(15:58)之前**——决策轮的私有段要读当日净值与持仓盈亏。
-    ("ai_mark_nav", dict(hour=15, minute=52), "ai_mark_nav", "AI交易联赛·当日净值"),
-    # 盘后批量深度分析（2026-10-19，P0）：把"自动深度分析"真正接进每日流程。
-    # ⚠️ 选 18:10 而不是 15:5x 有两个理由：
-    #    ① DeepSeek 峰谷定价（9-12、14-18 高峰，其余半价）⇒ 18:10 省 50%；
-    #    ② 避开 15:30~16:00 的 LLM 重任务叠加（复盘/AI 联赛），不让单进程排队。
+
+    # ── 午间 ───────────────────────────────────────────────
+    # AI 联赛午间决策轮：13:05。既避开上午算力高峰，又能用上午真实量价。
+    ("ai_midday_round", dict(hour=13, minute=5), "ai_round", "AI交易联赛·午间决策轮"),
+    # 选股候选 T+N 回填：**13:30**（2026-11-01，原 15:10）。
+    # 它回填的是**历史**样本的 5/20 日收益（要已到期的），不依赖当日收盘价，
+    #   没有理由挤在盘后窗口里。实测 P90 18 分钟，放午休段（午间决策轮之后、
+    #   14:40 风控之前）完全不与盘后重活争资源；复盘读它时早已落库。
+    ("backfill_screen", dict(hour=13, minute=30), "backfill_screen", "选股候选T+N回填"),
+
+    # ── 尾盘 ───────────────────────────────────────────────
+    # ⚠️ 尾盘的硬约束来自**阿深的轮班**（`ai_routine.SLOTS` 最后一班 = 14:40，
+    #    由盯盘任务 9-11/13-15 每分钟唤醒后按 slot 触发，不在 JOBS 里——所以
+    #    冲突检测器**看不见它**，只能靠这里的人工约束）：
+    #      14:40 阿深调整 → 14:45 风控巡检（检查调整后的持仓）→ 14:50 左侧预扫
+    # 持仓风控巡检：14:45（原 14:50）。必须晚于阿深 14:40 的调整（否则刚加的仓
+    #   还没来得及被风控看到），又要留出收盘前 10 分钟处置。
+    ("risk_check", dict(hour=14, minute=45), "risk", "持仓风控巡检"),
+    # 左侧监测盘中预扫（2026-11-01）：14:50，收盘前 10 分钟出清单方便次日操作。
+    #   用实时快照，不调模型、不推送；实时源不可用时自动回退最近截面并标 degraded。
+    ("leftside_intraday", dict(hour=14, minute=50), "leftside_intraday", "左侧监测盘中预扫"),
+
+    # ── 盘后：先做"轻"的 ────────────────────────────────────
+    # 市场情绪参照：15:20。唯一硬约束是**必须早于复盘**（复盘按采集日取快照，
+    #   晚了就永远读前一天）。1~2 个 HTTP、几秒完成；排它的目的是积累历史基准。
+    ("sentiment_ref", dict(hour=15, minute=20), "sentiment", "市场情绪参照采集"),
+    # 分析历史 T+N 回填：15:22（原 15:35）。3 分钟的小任务，原位置正好落在
+    #   afternoon_full(15:30 起、P90 57 分钟) 的窗口里；提前 8 分钟彻底让开。
+    #   它同时承担 T+5/T+20 的**里程碑 LLM 归因**，必须晚于收盘（要当日的 5/20 日收益）。
+    ("backfill_analysis", dict(hour=15, minute=22), "backfill", "分析历史T+N回填"),
+    # 盘后全流程（选股 + 规则回测）：15:30 **不动** —— 它要当日收盘价，15:30 是
+    #   数据可用性决定的边界。**它是全天最长的一环（P90 57.4 分钟 ⇒ 16:28）**，
+    #   下游一律排在 16:30 之后（旧表把它们排在 15:50~16:30，等于每天压在它身上）。
+    ("afternoon_full", dict(hour=15, minute=30), "rule", "盘后全流程(选股+回测)"),
+    # 全市场资金流 + 估值截面快照：15:40 **不动**。约束是**当日日线可用**
+    #   （Tushare daily 收盘后约半小时才出），再早就只拿到昨天的数据
+    #   （10-29 实测踩过 TushareStaleData）。它与 afternoon_full 有 ~10 分钟重叠，
+    #   这是数据可用性决定的**唯一保留重叠**，已登记在 test_schedule_conflicts 基线。
+    #   估值截面（PE/市值/换手率）逐日积累，是"六因子权重里 PE 那一项"的前置数据。
+    ("snapshot_flow", dict(hour=15, minute=40), "snapshot", "全市场资金流/估值截面快照采集"),
+
+    # ── 盘后账本与报告（全部在 afternoon_full 的 P90 之后）─────
+    # AI 联赛收盘账本（2026-11-01 合并）：原 `ai_settle_close`(15:05) + `ai_mark_nav`(15:52)。
+    #   两者都是**纯账本、零 LLM**：结算用的是触发时已记录的扫描价（与几点执行无关），
+    #   净值必须等到快照（含当日收盘价）落库之后。合并成一个槽位，少一次启动开销。
+    # ⚠️ job_id 仍叫 `ai_mark_nav`：STAGE_DEPS / 补跑跳过表 / 产物检查都按 job_id 键控，
+    #   改名会让"净值依赖快照"这条依赖静默失效；变的只是 mode（`ai_close`）。
+    ("ai_mark_nav", dict(hour=16, minute=30), "ai_close", "AI交易联赛·收盘结算+净值"),
+    # 左侧监测收盘正式版：16:33。读日频面板 + 对全池跑右侧状态机
+    #   （站回 MA20 记标记 / 60 自然日未修复 ⇒ expired 移出）。5 分钟跑完。
+    ("leftside_close", dict(hour=16, minute=33), "leftside_close", "左侧监测收盘扫描"),
+    # 每日复盘：16:38（原 15:50）。**这次挪动是纠错**：afternoon_full P90 57.4 分钟
+    #   ⇒ 16:28 才结束，而旧排期 15:50 意味着复盘**多数日子读不到当日选股**
+    #   （实测每天挂一条"上游未就绪 afternoon_full"）。挪到 P90 之后才有当日样本。
+    # 上游：snapshot_flow(15:50) / backfill_screen(13:48) / afternoon_full(16:28)。
+    ("daily_review", dict(hour=16, minute=38), "review", "每日复盘生成与推送"),
+    # 新闻行业评估：16:42。晚于复盘，且在上游快照之后（推荐排序用当日资金流）。
+    # 每天跑（周末快讯也有价值）⇒ mode 不进交易日闸门。
+    ("news_review", dict(hour=16, minute=42), "news_review", "新闻行业利好/利空评估"),
+    # AI 联赛盘后决策轮：16:47。简报要读新闻评估(16:42)与当日净值(16:30)的产物。
+    # ⚠️ **这是 JOBS 里唯一"每跑一次必花钱"的任务**（3 个 LLM persona × 最多 6 轮）。
+    #    改排期前先想清楚：随机对照组（3 个）零 LLM 成本，不受影响。
+    ("ai_daily_round", dict(hour=16, minute=47), "ai_round", "AI交易联赛·盘后决策轮"),
+    # 交易拥挤度截面：16:55。输入是两个**当日**产物（快照的换手率/成交额 + 面板收盘价），
+    #   必须是当日最后一环；产物供**次日 08:15 盘前选股**做减法闸门
+    #   （拥挤度前 10% 且 20 日涨幅前 20% ⇒ 不新开仓，11 年 11/11 年为负）。
+    ("crowd_snapshot", dict(hour=16, minute=55), "crowd", "交易拥挤度截面"),
+    # 超额衰减监控：**周五 17:05**（2026-10-31 新增，2026-11-01 改周频）。
+    #   它读 screen_picks 的 ret_20d/bench_ret_20d，而 T+20 回填至今 0/964 可判
+    #   ⇒ 日频只是每天记一条"样本不足"。等样本齐了再改回日频（删掉 day_of_week）。
+    #   ⚠️ 周频靠 `day_of_week` 显式覆盖：`_builtin_job_spec` 与补跑判据都认它。
+    ("alpha_decay", dict(hour=17, minute=5, day_of_week="fri"),
+     "alpha_decay", "超额衰减监控(周频)"),
+    # 换手率/流通股本日更：**17:15**（2026-11-01 新增）。
+    # 补的是一个"会自己变坏"的缺口：`data/panel/turn_share/` 是 10-29 一次性回填的，
+    #   当时只给了手工脚本、**没有日更任务** ⇒ 数据停在 2026-10-28。
+    #   下游 `factor_analysis` 取 `turnover_pct` 用 `ffill(limit=3)` 兜尾部，所以
+    #   缺 2 天还能撑，**第 4 个交易日（11-03）起 amihud20 等量价因子开始出 NaN**。
+    # 为什么 17:15：数据源是 `market_snapshot`（15:40 落库），只需读库 + 写 parquet，
+    #   实测 1~3 分钟。排在 crowd_snapshot(16:55，4 分钟) 之后、alpha_decay(17:05)
+    #   之前都行，取 17:15 是为了避开两者，且离 18:10 的 evening_analysis 仍有余量。
+    #   ⚠️ 第一版是打新浪接口，实测全量约 4 小时且会让进程 V8 abort ⇒ 已改快照派生。
+    ("turn_share_sync", dict(hour=17, minute=15), "turn_share_sync", "换手率/流通股本日更"),
+
+    # ── 晚间 / 高频 ────────────────────────────────────────
+    # 盘后批量深度分析：18:10。两个理由：① DeepSeek 峰谷定价（9-12、14-18 高峰，
+    #   其余半价）⇒ 18:10 省 50%；② 避开 15:30~17:00 的盘后重活，不让单进程排队。
     # 它**不重新选股**，只对当日已有候选跑分析（见 core/evening_analysis）。
     ("evening_analysis", dict(hour=18, minute=10), "llm_analysis", "盘后深度分析(TOP8)"),
     ("hourly_news", dict(minute=5), "news", "新闻快讯采集(每小时)"),
-    # Phase 1：盘中异动预警。cron 覆盖 9-15 点每分钟，真正的启停由
-    # core.watcher 判定（交易日 + 09:30-11:30 / 13:00-15:00），此处只负责"叫醒"。
+    # Phase 1：盘中异动预警。cron 覆盖 9-15 点每分钟，真正的启停由 core.watcher 判定
+    # （交易日 + 09:30-11:30 / 13:00-15:00），此处只负责"叫醒"。
     ("intraday_watch", dict(hour="9-11,13-15", minute="*"), "watch", "盘中异动预警"),
 ]
 
@@ -139,6 +188,34 @@ def _trading_day_modes() -> set:
         _logger.warning("读取交易日任务清单失败，退化为内置名单: %s", e)
         return {"screen", "rule", "review", "backfill", "backfill_screen",
                 "snapshot", "risk"}
+
+
+def run_leftside_job(job_desc: str = "左侧监测扫描", intraday: bool = False):
+    """左侧监测：无明显利空的大跌 + 基本面资质 → 关注池。
+
+    两个时点（用户要求"收盘前出清单、方便第二天操作"）：
+    - 14:45 **盘中预扫**（intraday=True）：用实时快照的当日跌幅（已接近收盘价），
+      收盘后立刻能看到清单、当晚研究基本面、次日开盘执行；
+    - 15:45 **收盘正式版**：用日频面板收盘价，落库口径以此为准，
+      并对池内全部条目做右侧状态机（站回 MA20 标记 / 60 天未修复判证伪移出）。
+
+    失败只记日志不抛出：监测是附加功能，不能把调度器带崩。
+    """
+    try:
+        from core import leftside_monitor as LM
+        from data.trading_calendar import last_trading_day
+        today = last_trading_day()
+        if intraday:
+            items = LM.scan_intraday()
+            r = LM.persist_pool(items, today)
+            _logger.info("[左侧监测/盘中] %s | 预清单 %d 条 | %s", job_desc, len(items), r)
+        else:
+            items = LM.scan()
+            r = LM.persist_pool(items, today)
+            u = LM.update_right_side()
+            _logger.info("[左侧监测/收盘] %s | 新增/刷新 %d 条 | 状态机 %s", job_desc, len(items), u)
+    except Exception as e:                              # noqa: BLE001
+        _logger.warning("[左侧监测] 扫描失败（不影响其他任务）: %s", e)
 
 
 def run_sentiment_job(job_desc: str = "市场情绪参照采集"):
@@ -266,18 +343,12 @@ def is_a_share_code(code: str) -> bool:
     （`market_codes()` 有 None 分支）——拿不到时若按"不在清单就丢"会把整表丢掉。
     这里只按代码段做**结构性**判定，不依赖任何网络/缓存，永远可用。
 
-    各段依据（交易所代码分配规则）：
-      600/601/603/605 沪主板 · 688/689 科创板 · 900 沪B ❌
-      000/001/002/003 深主板/中小板 · 300/301 创业板 · 200 深B ❌
-      8xx / 4xx / 920 北交所（920 为 2024 起的新代码段）
+    ⚠️ 实现已**下沉**到 `data/codes.py`（2026-10-30）：`data/` 层也要用这条规则
+    （财报公告日按 A 股过滤），而分层约束禁止 data → core。这里只做委托，
+    保证全项目仍**只有一处**实现（历史上这段规则在 data 里被复制过两次）。
     """
-    c = str(code or "").strip()
-    if len(c) != 6 or not c.isdigit():
-        return False
-    if c.startswith(("900", "200")):          # B 股
-        return False
-    return c.startswith(("60", "68", "000", "001", "002", "003",
-                         "300", "301", "8", "4", "920"))
+    from data.codes import is_a_share_code as _impl
+    return bool(_impl(code))
 
 
 def save_daily_market_snapshot(snapshot_date: str = None) -> dict:
@@ -936,8 +1007,299 @@ def run_ai_mark_nav_job(job_desc: str = "AI交易联赛·当日净值"):
         _logger.exception("═══ [%s] 任务异常: %s ═══", job_desc, e)
 
 
+def run_crowd_job(job_desc: str = "交易拥挤度快照"):
+    """盘后算一次全市场拥挤度截面并落表（选股只读表）。
+
+    ## 为什么单独一个任务、不塞进 15:40 的快照任务
+
+    实测单日全市场截面 **146s**（5,572 只 × `get_bars`，其中 20 日涨幅要读 21 根）。
+    `snapshot_flow` 本身已跑 9~10 分钟，再挂 2.5 分钟会把它推到 15:52 之后，
+    而 15:50 的复盘把 snapshot 当上游依赖 ⇒ 每天挂一条"上游未就绪"。
+    这与 `sentiment_ref` 被单独挪到 15:20 是同一个理由：**重活不叠加**。
+
+    ## 为什么是 16:30
+
+    必须在 `snapshot_flow`(15:40，写当日 `market_snapshot` 换手率/成交额)
+    与 `_refresh_panel_daily`（写当日收盘到 `daily_overlay`）**之后** —— 两者都是输入。
+    15:30~16:00 是 LLM 重任务区（复盘 15:50 / 决策轮 15:58 / 新闻 15:55），
+    16:30 是干净的窗口，且下游（次日 09:25 盘前选股）离它有 17 小时余量。
+
+    ## 失败处理
+
+    失败只记 WARNING、不推送（与 `run_sentiment_job` / `run_fin_disclosure_job`
+    同一口径）。但**必须进日志**：闸门读不到快照时会显式降级为"未生效"，
+    若连日志都没有，"闸门从来不生效"会被误读成"今天没有拥挤的票"。
+    """
+    start = datetime.now()
+    _logger.info("═══ [%s] %s 开始 ═══", job_desc, start.strftime("%Y-%m-%d %H:%M:%S"))
+    try:
+        from core import crowding
+        res = crowding.compute()
+        if not res.get("date") or not res.get("rows"):
+            _logger.warning("═══ [%s] 未生成：%s ═══", job_desc,
+                            (res.get("meta") or {}).get("note"))
+            return
+        path = crowding.save(res)
+        m = res["meta"]
+        _logger.info(
+            "═══ [%s] 完成 %.1fs：日期 %s 行 %d 拥挤度可用 %d 涨幅可用 %d "
+            "命中闸门 %d(%.1f%%) 行业 %s 组 %d 覆盖 %d 合并池 %d ⇒ %s ═══",
+            job_desc, (datetime.now() - start).total_seconds(), m["date"], m["rows"],
+            m["crowd_n"], m["mom_n"], m["gated"], m["gated_pct"] * 100,
+            m["industry_source"], m["industry_groups"], m["industry_covered"],
+            m["industry_pool"], path)
+        for w in m.get("degraded") or []:
+            _logger.warning("═══ [%s] 降级：%s ═══", job_desc, w)
+    except Exception as e:                              # noqa: BLE001
+        _logger.exception("═══ [%s] 任务异常（闸门会降级为未生效）: %s ═══", job_desc, e)
+
+
+def run_turn_share_job(job_desc: str = "换手率/流通股本日更"):
+    """换手率 / 流通股本日更（`data/panel/turn_share/{code}.parquet`）。
+
+    ## 为什么要有这个任务（2026-11-01）
+
+    `turn_share` 层是 2026-10-29 **一次性回填**的产物：当时只提供了手工脚本
+    `scripts/backfill_turn_share.py`，**没有接调度** ⇒ 数据停在 2026-10-28。
+    下游 `core/factor_analysis.py` 取 `turnover_pct` 时用 `ffill(limit=3)` 兜
+    尾部，所以缺 2 个交易日还能撑；**第 4 个交易日（11-03）起** amihud20 等
+    量价因子开始出 NaN —— 这是"会自己变坏"的缺口，不是静态技术债。
+
+    ## 为什么数据源是 `market_snapshot` 而不是新浪
+
+    第一版实现直接调回填脚本打新浪接口，实测**被否决**：
+    - 4 并发补 120 只花 250 秒 ⇒ 全量 5,830 只约 **4 小时**，日更不可行；
+    - 更糟：akshare 的 `stock_zh_a_daily` 每次调用都新建 V8 isolate（`py_mini_racer`），
+      多线程构造会让进程 `[FATAL] Check failed: !IsConfigurablePoolInitialized()`
+      **abort** —— 不是 Python 异常，`except` 拦不住，会把调度器连同当天剩余任务一起带走。
+
+    而 `snapshot_flow`（每天 15:40）已经把当日全市场 `turnover` / `float_cap` 落库，
+    口径与历史层一致（000001 在 2026-10-29：快照 1.02728 vs 换手率层 1.027278）
+    ⇒ 日更只需读库 + 追加 parquet，**秒级、零网络**。历史仍由脚本维护（按需手工跑）。
+
+    ## 失败处理
+
+    不抛、不推送（与 `run_crowd_job` / `run_sentiment_job` 同口径），但**必须落日志**：
+    缺数据不会让选股报错，只会让因子悄悄变 NaN，这条 WARNING 是唯一的现场。
+
+    Returns:
+        dict: `sync_from_snapshot()` 的结果（codes/rows/missing/errors）；
+        任务本身异常时返回 `{"error": ...}`。
+    """
+    start = datetime.now()
+    _logger.info("═══ [%s] %s 开始 ═══", job_desc, start.strftime("%Y-%m-%d %H:%M:%S"))
+    try:
+        from data import turn_share as TS
+        res = TS.sync_from_snapshot(days=10)
+        elapsed = (datetime.now() - start).total_seconds()
+        if res.get("errors"):
+            _logger.warning("═══ [%s] 完成 %.1fs，但 %d 只写入失败 ═══",
+                            job_desc, elapsed, len(res["errors"]))
+        else:
+            _logger.info("═══ [%s] 完成 %.1fs：快照日 %s，更新 %d 只 / %d 行，"
+                         "无历史文件的新股 %d 只（跳过）═══",
+                         job_desc, elapsed, res.get("dates") or "-",
+                         res.get("codes", 0), res.get("rows", 0),
+                         res.get("missing", 0))
+        return res
+    except Exception as e:                              # noqa: BLE001
+        _logger.exception("═══ [%s] 任务异常（量价因子尾部会缺当日数据）: %s ═══",
+                          job_desc, e)
+        return {"error": f"{type(e).__name__}: {e}"}
+
+
+def run_alpha_decay_job(job_desc: str = "超额衰减监控"):
+    """盘后检查"实盘选股的超额是否在衰减"，异常时推飞书。
+
+    ## 为什么盯 `screen_picks` 而不是研究实验的 JSON
+
+    `output/组合AB实验_*.json` 是一次性产物，文件不会自己更新；拿它做每日监控
+    等于监控一份历史快照 —— 策略偷偷失效也看不出来。真正要盯的是线上每天都在
+    产出的选股（`screen_picks` 带 `ret_Nd`/`bench_ret_Nd`）。
+
+    ## 两个口径同时跑
+
+    - **主判据 T+20**（`min_months=12`）：与项目 T+20 口径一致，噪声小、见效慢；
+    - **早期预警 T+5**（`min_months=6`）：能早 3 周看到苗头，但噪声大，
+      **只记日志、不推送**，避免"月度噪声"变成日常告警。
+
+    ## 推送与幂等
+
+    只有主判据 `alert`（最近 6 个月累计超额 ≤ 0）才推，`dedupe_key` 带日期，
+    同一天不重复。判据 `unknown`（样本不足）**不推送也不当 ok** —— 见
+    `core/alpha_decay.py` 的设计：没数据不等于没问题。
+    """
+    start = datetime.now()
+    _logger.info("═══ [%s] %s 开始 ═══", job_desc, start.strftime("%Y-%m-%d %H:%M:%S"))
+    try:
+        from core import alpha_decay as AD
+        from core import live_performance as LP
+
+        out: dict = {"generated_at": start.strftime("%Y-%m-%d %H:%M:%S")}
+
+        # ── 主判据：T+20 ──
+        perf20 = LP.monthly_pick_excess(20)
+        note20 = LP.coverage_note(perf20, 20)
+        if perf20.get("ok"):
+            rep20 = AD.decay_report(perf20["ret"], perf20["bench"], recent=6,
+                                    min_months=12)
+        else:
+            rep20 = {"level": AD.LEVEL_UNKNOWN,
+                     "reason": perf20.get("reason") or "无可用样本"}
+        out["t20"] = {**{k: v for k, v in rep20.items() if k != "rolling"},
+                      "coverage": note20}
+        _logger.info("═══ [%s] T+20 判定 %s ｜ %s ｜ %s ═══",
+                     job_desc, rep20["level"].upper(), rep20.get("reason"), note20)
+
+        # ── 早期预警：T+5（只记日志）──
+        perf5 = LP.monthly_pick_excess(5)
+        note5 = LP.coverage_note(perf5, 5)
+        if perf5.get("ok"):
+            rep5 = AD.decay_report(perf5["ret"], perf5["bench"], recent=6,
+                                   min_months=6)
+        else:
+            rep5 = {"level": AD.LEVEL_UNKNOWN,
+                    "reason": perf5.get("reason") or "无可用样本"}
+        out["t5"] = {**{k: v for k, v in rep5.items() if k != "rolling"},
+                     "coverage": note5}
+        _logger.info("═══ [%s] T+5 早期预警 %s ｜ %s ｜ %s ═══",
+                     job_desc, rep5["level"].upper(), rep5.get("reason"), note5)
+
+        # ── 落盘（供页面/排查，不依赖日志）──
+        try:
+            from config.paths import data_root
+            p = os.path.join(data_root(), "output", "alpha_decay_latest.json")
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            with open(p, "w", encoding="utf-8") as f:
+                json.dump(out, f, ensure_ascii=False, indent=1)
+        except Exception as e:                            # noqa: BLE001
+            _logger.warning("[%s] 落盘失败（不影响判定）: %s", job_desc, e)
+
+        # ── 只在主判据 alert 时推送 ──
+        if rep20["level"] == AD.LEVEL_ALERT:
+            from core.push import push_markdown
+            res = push_markdown(
+                "**策略超额转负告警**\n\n"
+                f"- 判定：{rep20['reason']}\n"
+                f"- 样本：{note20}\n"
+                f"- 时间：{out['generated_at']}\n\n"
+                "处置建议：停止加仓 / 复盘最近 6 个月的持仓与因子暴露 / "
+                "检查是否有制度或数据源变化。",
+                title="策略超额衰减告警",
+                dedupe_key=f"alpha_decay_{start.strftime('%Y%m%d')}")
+            _logger.info("═══ [%s] 告警推送：%s ═══", job_desc, res)
+    except Exception as e:                                # noqa: BLE001
+        _logger.exception("═══ [%s] 任务异常（监控本身失败，不要误读为策略正常）: %s ═══",
+                          job_desc, e)
+
+
+def run_fin_disclosure_job(job_desc: str = "财报公告日刷新(PIT)"):
+    """刷新财报公告日（PIT 前视防护的数据底座）。
+
+    ## 为什么要有这个定时任务
+
+    `financial_disclosures` 是**前视防护**的前提：`tool_financials(as_of=...)`
+    要靠它判断"那一期财报当时公布了没有"。表为空时防护是 fail-closed 的——
+    所有历史基本面分析都会返回"无可用财报"。而 exe 用户没有 Python 命令行，
+    跑不了 `scripts/backfill_disclosure_dates.py` ⇒ 必须由调度自己维护，
+    否则这个能力在分发布局下等于不存在。
+
+    ## 为什么只刷"最近两期"而不是全量
+
+    全量 8 期约 25 秒、每天跑纯属浪费；公告日只在**新一期开始披露**和
+    **上一期补更正**时变化。刷最近两期（~6 秒）覆盖两种情形；历史期若要重建，
+    用 `scripts/backfill_disclosure_dates.py --periods 8 --reset` 手工跑。
+
+    ## 失败处理
+
+    巨潮/东财都是第三方接口，失败只记 WARNING、**不推送**——一个接口抖动不该
+    变成每天一条告警（与 `run_sentiment_job` 同一口径）。但**必须进日志**，
+    否则"表里一直没数据"会被误判成"本来就没有财报"。
+    """
+    start = datetime.now()
+    try:
+        from data import fin_disclosure as fd
+        from db import store
+        periods = fd.quarter_ends(2)
+        res = fd.backfill(periods=periods)
+        cov = store.fin_disclosure_coverage()
+        _logger.info("═══ [%s] 完成: %.1fs, 刷新 %s, 写入 %d 行, "
+                     "表内累计 %d 期/%d 行 ═══",
+                     job_desc, (datetime.now() - start).total_seconds(),
+                     periods, res.get("written", 0),
+                     cov.get("period_count", 0), cov.get("rows", 0))
+        for p in res.get("periods") or []:
+            if p.get("error"):
+                _logger.warning("═══ [%s] %s 抓取失败（保留旧数据）: %s ═══",
+                                job_desc, p.get("period"), str(p["error"])[:160])
+    except Exception as e:                              # noqa: BLE001
+        _logger.exception("═══ [%s] 任务异常: %s ═══", job_desc, e)
+
+
 def run_job(mode: str, job_desc: str, trading_day_only: bool = None,
-            force: bool = False, job_id: str = None, no_budget: bool = False):
+            force: bool = False, job_id: str = None, no_budget: bool = False,
+            slot: str = None, model: str = None):
+    """执行一次任务（带异常兜底，避免调度线程死亡）。
+
+    这是 `_run_job_impl` 的**薄包装**：唯一职责是"任务级模型覆盖"
+    （2026-11-01）。拆一层而不是把 `with` 塞进主体，是因为主体有一串
+    early return 的分支（`if mode == "watch": ...; return`），在这些分支之间
+    维护一个上下文管理器等于给每个 return 都埋一个漏 reset 的坑。
+
+    Args:
+        model: 该任务**使用哪个模型**（空/None = 跟随功能默认）。
+               `model_override` 是 ContextVar，同一线程内的所有 LLM 调用都吃到；
+               APScheduler 每个 job 在自己的线程池线程里同步执行 ⇒ 不会串到别的任务。
+    """
+    _start = datetime.now()
+    _err = None
+    try:
+        if not str(model or "").strip():
+            return _run_job_impl(mode, job_desc, trading_day_only, force, job_id,
+                                 no_budget, slot)
+        from llm.deepseek_client import model_override
+        with model_override(str(model).strip()):
+            _logger.info("[%s] 任务级模型覆盖：%s", job_desc, str(model).strip())
+            return _run_job_impl(mode, job_desc, trading_day_only, force, job_id,
+                                 no_budget, slot)
+    except Exception as e:                      # noqa: BLE001
+        _err = e
+        raise
+    finally:
+        # 台账收尾**必须在 finally**：`_run_job_impl` 主体有十几个 early return，
+        # 逐个补"写完成"等于给每个 return 埋一个漏写的坑（同一个理由见上面的 docstring）。
+        # 写在 `run_job` 这一层还有一个好处：它是 APScheduler 注册的唯一入口，
+        # 手动重放（scripts/run_scheduler.py）与启动补跑也都走它。
+        _finish_job_ledger(job_id, slot, job_desc, _err,
+                           (datetime.now() - _start).total_seconds())
+
+
+def _finish_job_ledger(job_id: str, slot: str, job_desc: str, err,
+                       elapsed: float = None) -> None:
+    """收尾执行台账（`run_job` 的 finally 专用）。**绝不抛**。
+
+    台账是排查辅助：写不进去绝不能让一个已经跑完的任务算失败。
+    `run_date` 取当前日期（与 `_run_job_impl` 入口同一取法）；跨午夜结束的槽位
+    会 UPDATE 0 行、`finished_at` 留空 —— 一年最多几次，不值得为它加一套日期传递。
+    """
+    if not (job_id and slot):
+        return
+    try:
+        from db import store as _store
+        detail = str(job_desc)
+        if err is not None:
+            detail += f" · {type(err).__name__}: {str(err)[:120]}"
+        _store.finish_job_run(
+            job_id, datetime.now().strftime("%Y-%m-%d"), slot,
+            status="error" if err is not None else "done",
+            elapsed=elapsed, detail=detail)
+    except Exception as e:                      # noqa: BLE001
+        _logger.warning("[台账] %s@%s 收尾失败: %s", job_id, slot, e)
+
+
+def _run_job_impl(mode: str, job_desc: str, trading_day_only: bool = None,
+                  force: bool = False, job_id: str = None, no_budget: bool = False,
+                  slot: str = None):
     """执行一次任务（带异常兜底，避免调度线程死亡）
 
     Args:
@@ -950,7 +1312,20 @@ def run_job(mode: str, job_desc: str, trading_day_only: bool = None,
             **上游依赖检查**（`core.stage_health`）：blocking 阶段的上游缺失 ⇒ 跳过；
             非 blocking 阶段的上游缺失 ⇒ 照跑但打 WARNING（降级要如实）。
             不传 ⇒ 完全跳过检查（自定义任务、手动 --once 走这条），行为与旧版一致。
+        slot: **P0（2026-10-31）** 排期时刻（"HH:MM"）。给了就在**入口处**记一条执行
+            台账 `job_runs(job_id, run_date, slot)` —— 这是"这个槽位跑过没有"的唯一
+            依据，启动补跑靠它判断（APScheduler 的 job 是内存态，重启即忘）。
+            记在入口而不是出口：被交易日/上游检查跳过的槽位**也要留痕**，
+            否则每次启动都会把它当成"漏跑"去补。
     """
+    if job_id and slot:
+        try:
+            from db import store as _store
+            _store.record_job_run(job_id, datetime.now().strftime("%Y-%m-%d"), slot,
+                                  status="started", detail=job_desc)
+        except Exception as e:                       # noqa: BLE001
+            # 台账写不进去不能让任务不跑——但必须留痕（否则补跑判断会失效）
+            _logger.warning("[台账] %s@%s 写入失败: %s", job_id, slot, e)
     if mode == "watch":
         run_watch_job(job_desc)
         return
@@ -993,8 +1368,27 @@ def run_job(mode: str, job_desc: str, trading_day_only: bool = None,
     if mode == "snapshot":
         run_snapshot_job(job_desc)
         return
+    if mode == "crowd":
+        run_crowd_job(job_desc)
+        return
+    if mode == "turn_share_sync":
+        # 换手率/流通股本日更（17:15）。返回值只是失败只数，不影响调度。
+        run_turn_share_job(job_desc)
+        return
+    if mode == "leftside_intraday":
+        run_leftside_job(job_desc, intraday=True)
+        return
+    if mode == "leftside_close":
+        run_leftside_job(job_desc, intraday=False)
+        return
     if mode == "sentiment":
         run_sentiment_job(job_desc)
+        return
+    if mode == "fin_disclosure":
+        run_fin_disclosure_job(job_desc)
+        return
+    if mode == "alpha_decay":
+        run_alpha_decay_job(job_desc)
         return
     if mode == "review":
         run_review_job(job_desc)
@@ -1020,6 +1414,15 @@ def run_job(mode: str, job_desc: str, trading_day_only: bool = None,
     if mode == "ai_settle_close":
         run_ai_settle_job(job_desc, phase="close")
         return
+    if mode == "ai_close":
+        # 合并任务（2026-11-01）：**先结算日内动作，再记当日净值**。
+        # 为什么能合：两步都是纯账本、零 LLM —— 结算用的是触发时已记录的扫描价
+        #   （与几点执行无关），净值只要求"快照落库之后"。原先拆在 15:05 与 15:52
+        #   两个槽位，白白多占一个排期点和一次进程唤醒。
+        # 为什么是这个顺序：净值必须反映"当天所有成交之后的持仓" ⇒ 结算在前。
+        run_ai_settle_job(job_desc, phase="close")
+        run_ai_mark_nav_job(job_desc)
+        return
     if mode == "ai_mark_nav":
         run_ai_mark_nav_job(job_desc)
         return
@@ -1039,6 +1442,232 @@ def run_job(mode: str, job_desc: str, trading_day_only: bool = None,
         _logger.exception("═══ [%s] 任务异常: %s ═══", job_desc, e)
 
 
+# ══════════════════════════════════════════════════════════════════
+# 任务执行台账 + 启动补跑（2026-10-31）
+# ══════════════════════════════════════════════════════════════════
+# 为什么要有：APScheduler 的 job 是**内存态**。进程一重启，"今天这个槽位跑过没有"
+# 就全忘了；而 `misfire_grace_time=3600` 只在进程还活着时才起作用。
+# 后果实测：2026-10-30 的 18:10 `evening_analysis`（盘后 TOP8 深度分析）正好撞上
+#   重启窗口 ⇒ 静默消失，第二天看报告才发现没跑，而日志里连"跳过"都没有。
+
+CATCHUP_WINDOW_MIN = 180      # 只补"错过 ≤3 小时"的槽位（再久补跑没有意义）
+CATCHUP_GRACE_MIN = 12        # 排期后 12 分钟内算"正常在跑"，不补
+CATCHUP_DELAY_S = 25          # 启动后等多久再补（避开暖机抢 DB/网络）
+
+# ⚠️ **不给补跑的任务**（每条都有具体理由，不是"懒得补"）：
+CATCHUP_SKIP_IDS = frozenset({
+    # 选股类：补跑会在非常规时点产出"今日选股"。pick_date 仍是当天，但与 08:15
+    # 的口径（盘前、用上一交易日快照）不同 ⇒ 污染 screen_picks 的 T+N 回填分母。
+    # ⚠️ 2026-11-01 删除 `noon_screen`（任务已合并进 morning_screen）。
+    "morning_screen", "afternoon_full",
+    # 结算类：开盘结算绑的是**开盘时点**，18:00 补跑等于用收盘价重算开盘单；
+    # 收盘账本（mode=ai_close）同理。净值补跑会在"当天"写出一个假的收盘净值。
+    "ai_settle_open", "ai_mark_nav",
+    # 联赛决策轮：slot 本身就是语义（09:40 的轮次在 18:00 跑没有意义）。
+    "ai_daily_round", "ai_midday_round",
+    # 高频：错过这一轮，下一轮很快就到；补跑只会打乱节奏。
+    "intraday_watch", "hourly_news",
+    # 会推飞书：18:00 补推"今日复盘"会让用户以为刚生成，且与幂等键冲突。
+    "daily_review",
+})
+
+
+def _weekday_matches(dow: str, when: datetime) -> bool:
+    """`when` 的星期是否落在 cron 的 `day_of_week` 里。
+
+    补跑判据原来**只看 hour/minute、不看星期** ⇒ 周频任务（2026-11-01 起
+    `alpha_decay` 改周五）会在周一到周四各被"补跑"一次，等于白跑四遍。
+    解析复用 `scheduled_jobs._expand_days`：星期字段只该有一个解析器，
+    两处各写一遍必然走样（"mon-fri" 被截成 "mon" 的老坑）。
+    """
+    from core.scheduled_jobs import _expand_days
+    days = _expand_days(dow)
+    return bool(days) and when.weekday() in days
+
+
+def catchup_missed_jobs(now=None, *, window_min: int = CATCHUP_WINDOW_MIN,
+                        grace_min: int = CATCHUP_GRACE_MIN,
+                        only=None) -> list:
+    """补跑**今天错过**的时间槽，返回实际补跑的 job_id 列表。
+
+    判据（全部满足才补）：
+      1. 该 job 在 `JOBS` 里、且不在 `CATCHUP_SKIP_IDS`；
+      2. 排期时刻是**具体整点**（高频/通配任务如 `intraday_watch` 不补）；
+      3. 现在距排期 `grace_min ~ window_min` 分钟之间（太早是在跑，太晚没意义）；
+      4. 台账里**没有**该 (job_id, 今天, slot) 记录。
+
+    幂等：补跑前先写台账（status=caught_up），所以同一天重复调用不会补两次；
+    补跑的任务内部若判断"非交易日/上游缺失"而跳过，台账仍有记录——语义是
+    **"调度器处理过这个槽位"**，这正是补跑要保证的。
+    """
+    from db import store
+
+    now = now or datetime.now()
+    today = now.strftime("%Y-%m-%d")
+    done = []
+    for job_id, cron_kwargs, mode, desc in JOBS:
+        if job_id in CATCHUP_SKIP_IDS:
+            continue
+        if only is not None and job_id not in only:
+            continue
+        h, m = cron_kwargs.get("hour"), cron_kwargs.get("minute", 0)
+        if not isinstance(h, int) or not isinstance(m, int):
+            continue                      # "9-11,13-15" / "*" 这类不补
+        dow = cron_kwargs.get("day_of_week")
+        if dow and not _weekday_matches(dow, now):
+            continue                      # 周频任务（周五的 alpha_decay）不在今天
+        try:
+            slot_dt = now.replace(hour=h, minute=m, second=0, microsecond=0)
+        except ValueError as e:           # 非法时刻（如 hour=24）不该让启动失败
+            _logger.warning("[补跑] %s 的排期 %s:%s 非法，跳过: %s",
+                            job_id, h, m, e)
+            continue
+        lag = (now - slot_dt).total_seconds() / 60.0
+        if lag < grace_min or lag > window_min:
+            continue
+        slot = f"{h:02d}:{m:02d}"
+        try:
+            if store.has_job_run(job_id, today, slot):
+                continue
+            store.record_job_run(job_id, today, slot, status="caught_up",
+                                 detail=f"错过 {lag:.0f} 分钟，启动时补跑")
+        except Exception as e:                       # noqa: BLE001
+            _logger.warning("[补跑] %s 台账读写失败，跳过（不冒险重复执行）: %s",
+                            job_id, e)
+            continue
+        _logger.info("═══ [补跑] %s（%s）排期 %s，已错过 %.0f 分钟 ⇒ 现在补跑 ═══",
+                     job_id, desc, slot, lag)
+        try:
+            run_job(mode, desc, job_id=job_id)
+            done.append(job_id)
+        except Exception as e:                       # noqa: BLE001
+            _logger.exception("═══ [补跑] %s 执行失败: %s ═══", job_id, e)
+    if done:
+        _logger.info("═══ [补跑] 完成 %d 个：%s ═══", len(done), "、".join(done))
+    else:
+        _logger.info("[补跑] 今天没有需要补的槽位")
+    return done
+
+
+def start_catchup_async(delay_s: float = CATCHUP_DELAY_S) -> None:
+    """在后台线程里做补跑，**不阻塞调度器启动**。
+
+    为什么要延迟：启动瞬间各模块在暖机（板块宽度、面板、快照），补跑的任务也要
+    读 DB/面板，立刻抢会把启动拖长、还可能撞上"上游还没就绪"的假失败。
+    为什么要后台线程：`scheduler.start()` 是阻塞调用，补跑若同步做，这段时间
+    到点的任务会全部错过——正好制造我们想避免的问题。
+    """
+    import threading
+
+    def _worker() -> None:
+        import time as _time
+
+        _time.sleep(max(0.0, delay_s))
+        try:
+            catchup_missed_jobs()
+        except Exception as e:                       # noqa: BLE001
+            _logger.exception("[补跑] 后台补跑异常（不影响调度器）: %s", e)
+
+    th = threading.Thread(target=_worker, daemon=True, name="job-catchup")
+    th.start()
+
+
+def _builtin_job_spec(job_id: str, cron_kwargs: dict, mode: str,
+                      desc: str, ov: dict) -> tuple:
+    """内置任务的 (trigger, 展示名, 槽位, model)。
+
+    抽出来是为了让"启动注册"与"热同步重建"用**同一份**口径：
+    两处各写一遍，迟早在 news 每天跑 / 槽位算法 / 备注拼接上走样。
+    """
+    ov = ov or {}
+    _note = str(ov.get("note") or "")
+    if _note and _note not in desc:
+        desc = f"{desc}｜{_note}"
+    # 星期：cron 里显式给了 `day_of_week` 就用它（周频任务，如 alpha_decay 周五），
+    # 否则默认周一至周五；news 类默认每天（含周末，快讯不停）。
+    # ⚠️ 必须先把 day_of_week 从 kwargs 里摘掉：`CronTrigger(day_of_week=..., **kw)`
+    #    遇到 kw 里同名字段会 TypeError（duplicate keyword argument）。
+    _dow = cron_kwargs.get("day_of_week")
+    _kw = {k: v for k, v in cron_kwargs.items() if k != "day_of_week"}
+    if mode == "news" and not _dow:
+        trigger = CronTrigger(**_kw)
+    else:
+        trigger = CronTrigger(day_of_week=_dow or "mon-fri", **_kw)
+    _h, _m = _kw.get("hour"), _kw.get("minute", 0)
+    slot = (f"{int(_h):02d}:{int(_m):02d}"
+            if isinstance(_h, int) and isinstance(_m, int) else None)
+    return trigger, desc, slot, (str(ov.get("model") or "") or None)
+
+
+def register_builtin_job(scheduler, job_id: str, cron_kwargs: dict, mode: str,
+                         desc: str, ov: dict) -> None:
+    """注册/重建一个内置任务（先 remove 再 add，与自定义任务同一个理由）。"""
+    try:
+        scheduler.remove_job(job_id)
+    except Exception as e:                       # noqa: BLE001
+        _logger.debug("remove_job(%s) 失败（本来就不存在）: %s", job_id, e)
+    # ⚠️ 变量名就叫 `desc`：`run_job` 的第二个位置参数是**任务描述**，契约见
+    #    tests/test_stage_health.py::test_scheduler_registers_job_id。
+    #    spec 可能按覆盖表改写它（用户自定义备注），所以取 spec 的返回值。
+    trigger, desc, slot, model = _builtin_job_spec(job_id, cron_kwargs, mode, desc, ov)
+    scheduler.add_job(
+        run_job, trigger, args=[mode, desc, None, False, job_id, False, slot],
+        # 任务级模型：走 kwargs（args 里塞不进去——model 在签名末尾且有默认值）
+        kwargs={"model": model},
+        id=job_id, name=desc, misfire_grace_time=3600, coalesce=True,
+    )
+
+
+def sync_builtin_overrides(scheduler) -> dict:
+    """把内置任务的用户覆盖（启停/备注/模型）同步到**活着**的调度器上。
+
+    调度进程每 60s 调一次（与 `sync_custom_jobs` 同一个循环）。
+    边界：读库失败 ⇒ 本轮不动（绝不能把"读不到"当成"全部停用"）。
+    """
+    from db import store as _store
+
+    try:
+        ovs = _store.list_builtin_overrides()
+    except Exception as e:                       # noqa: BLE001
+        _logger.warning("[内置任务] 读取覆盖失败，本轮不同步: %s", e)
+        return {"disabled": [], "restored": [], "updated": [], "changed": False}
+    try:
+        current = {j.id: j for j in scheduler.get_jobs()}
+    except Exception as e:                       # noqa: BLE001
+        _logger.warning("[内置任务] 读取调度器任务失败，本轮不同步: %s", e)
+        return {"disabled": [], "restored": [], "updated": [], "changed": False}
+
+    disabled, restored, updated = [], [], []
+    for job_id, cron_kwargs, mode, desc in JOBS:
+        ov = ovs.get(job_id) or {}
+        want = ov.get("enabled", True) is not False
+        exists = job_id in current
+        try:
+            if not want:
+                if exists:
+                    scheduler.remove_job(job_id)
+                    disabled.append(job_id)
+                continue
+            if not exists:
+                register_builtin_job(scheduler, job_id, cron_kwargs, mode, desc, ov)
+                restored.append(job_id)
+                continue
+            # 已存在：只有 model / note 变了才重建（改 cron 不在覆盖层范围内）
+            cur_model = str((current[job_id].kwargs or {}).get("model") or "")
+            want_model = str(ov.get("model") or "")
+            cur_note_ok = str(ov.get("note") or "") in str(current[job_id].name or "")
+            if cur_model != want_model or not cur_note_ok:
+                register_builtin_job(scheduler, job_id, cron_kwargs, mode, desc, ov)
+                updated.append(job_id)
+        except Exception as e:                   # noqa: BLE001
+            _logger.warning("[内置任务] 同步 %s 失败: %s", job_id, e)
+    if disabled or restored or updated:
+        _logger.info("[内置任务] 热同步：停用 %s / 恢复 %s / 更新 %s",
+                     disabled, restored, updated)
+    return {"disabled": disabled, "restored": restored, "updated": updated,
+            "changed": bool(disabled or restored or updated)}
+
+
 def create_scheduler() -> BlockingScheduler:
     """创建已注册任务的调度器（不启动）
 
@@ -1047,19 +1676,24 @@ def create_scheduler() -> BlockingScheduler:
     "调度器根本没启动而无人察觉"，新增一层配置绝不能成为新的启动失败点。
     """
     scheduler = BlockingScheduler(timezone="Asia/Shanghai")
+    # 内置任务的用户覆盖层（2026-11-01）：启停 / 备注 / 使用模型。
+    # 读库失败不能让调度器起不来（同上：启动失败是最大事故）。
+    overrides = {}
+    try:
+        from db import store as _store
+        overrides = _store.list_builtin_overrides()
+    except Exception as e:                       # noqa: BLE001
+        _logger.warning("读取内置任务覆盖失败（按代码默认值启动）: %s", e)
     for job_id, cron_kwargs, mode, desc in JOBS:
-        # ⚠️ 新闻与交易日无关（周末也有财经快讯）：mode=news **每天**跑。
-        #    原实现把所有任务一律 mon-fri ⇒ 周末整天空采（2026-10-18 周日实测：
-        #    库内最后一条停在工作日 22:31，页 12 的 24h 窗口恰好滑出 ⇒ "没新闻"）。
-        #    news_review（评估，涉及 LLM 成本）仍限交易日——它评的是"行情相关"。
-        if mode == "news":
-            trigger = CronTrigger(**cron_kwargs)
-            _dow_desc = "每天"
-        else:
-            trigger = CronTrigger(day_of_week="mon-fri", **cron_kwargs)
-            _dow_desc = "周一至周五"
+        ov = overrides.get(job_id) or {}
+        if ov.get("enabled") is False:
+            _logger.info("内置任务 %s (%s) 已被用户停用 ⇒ 不注册", job_id, desc)
+            continue
+        # 同 register_builtin_job：第二个位置参数是 desc（契约测试锁死）
+        trigger, desc, slot, model = _builtin_job_spec(job_id, cron_kwargs, mode, desc, ov)
         scheduler.add_job(
-            run_job, trigger, args=[mode, desc, None, False, job_id],
+            run_job, trigger, args=[mode, desc, None, False, job_id, False, slot],
+            kwargs={"model": model},
             id=job_id, name=desc, misfire_grace_time=3600, coalesce=True,
         )
         # ⚠️ 不要用 %02d：hour/minute 可能是字符串（盘中盯盘任务是 "9-11,13-15" / "*"）。
@@ -1068,7 +1702,9 @@ def create_scheduler() -> BlockingScheduler:
         # 但日志乱码/中断，排障时极易误判。统一 %s。
         # （UI 配置页有过同样的坑，见 7_⚙️_系统配置.py 的 _cron_field）
         _logger.info("已注册任务: %s (%s) → mode=%s, cron=%s %s:%s",
-                     job_id, desc, mode, _dow_desc,
+                     job_id, desc, mode,
+                     cron_kwargs.get("day_of_week")
+                     or ("每天" if mode == "news" else "周一至周五"),
                      cron_kwargs.get("hour", "*"), cron_kwargs.get("minute", 0))
 
     # 自定义任务：与内置共用 run_job，只是排期来自库
@@ -1097,13 +1733,25 @@ def custom_job_ids(scheduler) -> list:
 
 
 def reload_custom_jobs(scheduler) -> dict:
-    """热加载自定义任务（调度进程每 60s 调用一次）。异常兜底，不冒泡。"""
+    """热加载自定义任务 + 内置任务的用户覆盖（调度进程每 60s 调用一次）。
+
+    异常兜底，不冒泡：同步失败不该拖垮调度主循环。
+    """
+    out = {"changed": False}
     try:
         from core.scheduled_jobs import sync_custom_jobs
-        return sync_custom_jobs(scheduler, builtin_ids=JOB_IDS)
+        out = sync_custom_jobs(scheduler, builtin_ids=JOB_IDS)
     except Exception as e:                      # noqa: BLE001
         _logger.warning("热加载自定义定时任务失败: %s", e)
-        return {"changed": False, "error": str(e)}
+        out = {"changed": False, "error": str(e)}
+    try:
+        builtin = sync_builtin_overrides(scheduler)
+        if builtin.get("changed"):
+            out = {**out, "builtin": builtin, "changed": True}
+    except Exception as e:                      # noqa: BLE001
+        # 内置覆盖同步失败不影响自定义任务那一轮的结果
+        _logger.warning("热同步内置任务覆盖失败: %s", e)
+    return out
 
 
 

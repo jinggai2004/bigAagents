@@ -403,7 +403,8 @@ def check_health(check_processes: bool = True,
             "以下长驻进程跑的是**旧代码**："
             + "、".join(long_running["stale"])
             + "。启动之后源码有改动 → 改动的逻辑不会生效，且不会有任何报错。"
-            "调度器双击 `重启调度器.bat`；UI 重跑 `streamlit run ui/app.py`。")
+            "调度器双击 `重启调度器.bat`；界面重开 "
+            "`dist/bigAagents/bigAagents.exe`。")
 
     # 数据新鲜度：心跳正常但关键表长期不增长 → 链路有问题（不是"没到时间"就是"一直失败"）
     if sched.get("running"):

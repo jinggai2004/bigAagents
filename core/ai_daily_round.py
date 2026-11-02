@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 """多 AI 交易联赛 · 盘后决策轮（C5，2026-10-14，S4）。
 
-时序（挂在 15:58，晚于 15:55 的新闻行业评估）：
-    15:30 盘后全流程（选股）→ 15:40 快照 → 15:45 复盘 → 15:55 新闻评估 → **15:58 ai_daily_round**
+时序（挂在 16:47，晚于 16:42 的新闻行业评估；2026-11-01 前是 15:58）：
+    15:30 盘后全流程（P90 58 分钟）→ 15:40 快照 → 16:30 账本（结算+净值）
+    → 16:38 复盘 → 16:42 新闻评估 → **16:47 ai_daily_round**
+    ⚠️ 边界没变：**净值先于决策轮**（私有段要读当日净值），**新闻评估先于决策轮**（简报要读它）。
 
 ⚠️ 公平性铁律：**公共简报对所有 AI 逐字节相同**
 （`build_common_briefing()` 一次组装、N 个 AI 共用；只有"自己的持仓/净值/预算"是私有段）。
@@ -86,8 +88,13 @@ def _load_market_signal(day: str) -> dict:
     try:
         import json as _json
         import os as _os
-        path = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
-                             "output", "daily_picks", "latest.json")
+        # ⚠️ 必须走 `config.paths.data_root()`（2026-10-30 修）：原实现用 `__file__`
+        #    拼路径，frozen 后 `__file__` 在只读的 `_internal/` 里 ⇒ 永远找不到
+        #    `output/daily_picks/latest.json` ⇒ 联赛简报"目标仓位不可用"
+        #    （2026-10-30 实测：13:12 午间轮与 16:40 盘后轮两轮都中招）。
+        #    与写入方 `core/pipeline.OUTPUT_DIR`（同为 data_root）保持同一口径。
+        from config.paths import data_root as _data_root
+        path = _os.path.join(_data_root(), "output", "daily_picks", "latest.json")
         with open(path, encoding="utf-8") as f:
             d = _json.load(f)
         if str(d.get("date")) != str(day):

@@ -440,14 +440,18 @@ class TestStructuralGuard:
     def test_reserved_features_are_documented(self):
         """无调用点的登记项必须显式标注，不能是"忘了接线"。
 
-        当前有两类：
+        当前有三类：
           · `chat.deep`            预留位（原 `CHAT_MODEL_DEEP` 死常量转来）
           · `verify.model`         已下线临时脚本的历史遗留（键形两段，族键覆盖不到；
                                    留着只为让 24h 窗口内的旧用量归组，不再产生新记录）
+          · `config.test`          原 Streamlit 系统页的「LLM 连通性测试」按钮
+                                   （2026-11-01 页面归档后无调用点；Web 系统页按设计
+                                   不做连通性探测）。保留登记是为了将来接回时
+                                   模型档位与分组不丢。
         集合写成字面量是刻意的：**新增一条就必须来改这里**，
         否则"登记了个没人调的东西"会悄无声息地留在配置页上。
         """
-        assert MR.reserved_features() == {"chat.deep", "verify.model"}
+        assert MR.reserved_features() == {"chat.deep", "verify.model", "config.test"}
         for key in MR.reserved_features():
             assert MR.FEATURES[key].get("desc"), f"{key} 标了 reserved 但没写清原因"
 

@@ -36,6 +36,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core.replay_eval import (  # noqa: E402
     DEFAULT_MIN_CROSS, forward_returns, load_matrices,
 )
+from core.universe_guard import trim_matrix  # noqa: E402
 
 HORIZONS = (1, 5, 20)
 MIN_CHANGE_PCT = 3.0
@@ -101,6 +102,8 @@ def _report(title: str, rows: list) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--days", type=int, default=1500)
+    ap.add_argument("--no-guard", action="store_true",
+                    help="关掉宇宙守卫（仅用于对比污染前后，结果不可用于决策）")
     args = ap.parse_args()
 
     print(f"载入回放矩阵（days={args.days}，缓存命中则秒级）…")
@@ -108,6 +111,15 @@ def main() -> int:
     if not m:
         print("面板不可用 ⇒ 无法评估")
         return 1
+    # ⚠️ 宇宙守卫（2026-10-31）：面板含"上市不满一年"与"北交所开市前"的行，
+    #    那些格子的收益是停牌跨段的复牌跳空（实测能造出 +142%/月）。
+    #    置 NaN 而不是 0 —— 0 会被当成"当天涨跌 0%"混进基线均值。
+    if not args.no_guard:
+        for k in ("close", "open", "pct_chg", "amount"):
+            if k in m and hasattr(m[k], "columns"):
+                m[k] = trim_matrix(m[k])
+        print("宇宙守卫：已把不可比 (日,票) 格子置 NaN")
+
     close, open_ = m["close"], m["open"]
     pct, amount = m["pct_chg"], m["amount"]
     meta = m.get("meta") or {}

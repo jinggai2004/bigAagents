@@ -75,6 +75,9 @@ def _load(path: str, now: datetime) -> dict:
         "stage_timings": raw.get("stage_timings") or {},
         "skipped": bool(raw.get("skipped")),
         "skip_reason": raw.get("skip_reason") or "",
+        # 门槛执行明细（2026-10-30）：拥挤度闸门 / 流动性下限是否生效。
+        # 缺字段时给 {}（旧产物），**不给 None** —— 页面按 dict 取，None 会炸。
+        "screen_meta": raw.get("screen_meta") or {},
         "errors": raw.get("errors") or [],
         "elapsed_seconds": raw.get("elapsed_seconds"),
         "stale": (None if lag is None else lag > 0),

@@ -77,32 +77,72 @@ def ensure_session(session_id: str, persona: str = None, model: str = None,
 # 读写一轮对话
 # ================================================================
 
-def save_turn(session_id: str, user_msg: str, answer: str,
-              usage: dict = None, tools_used: list = None,
-              persona: str = None, model: str = None,
-              source: str = "ui") -> bool:
-    """落库一问一答，并在首条提问时定标题。
+def start_turn(session_id: str, user_msg: str,
+               persona: str = None, model: str = None,
+               source: str = "ui") -> bool:
+    """**立刻**落库提问（2026-10-30）：断开 / 崩溃也留痕。
 
-    ⚠️ token 只记在 user 行：一次调用产生的 prompt/completion 属于这一轮，
-    记在 assistant 行会与"本轮用量"错位（assistant 行的 tokens 留空）。
+    事故：13:14 用户问 603605，后端处理了 6 分钟，13:20 页面 WebSocket 断开 ——
+    由于旧行为是"整轮跑完才 save_turn"，此刻 `chat_logs` 里**一条都没有**，
+    用户屏幕上没有回答、库里也没有提问，连排查都没线索。
+
+    拆成 start/complete 两步后：提问在收到时就落库，回答在轮末补上。
+    若进程中途崩溃，库里至少有提问（assistant 行缺失即是"没跑完"的痕迹）。
+
+    Returns:
+        是否成功（失败只记日志不抛，聊天主流程不应被历史层拖死）。
     """
     if not session_id:
         return False
-    usage = usage or {}
     try:
         ensure_session(session_id, persona=persona, model=model, source=source)
         existing = store.get_chat_messages(session_id, limit=1)
         if not existing:
             store.update_chat_session(session_id, {"title": auto_title(user_msg)})
-        store.insert_chat_log(
-            session_id, "user", user_msg,
-            prompt_tokens=usage.get("prompt"), completion_tokens=usage.get("completion"))
-        store.insert_chat_log(
-            session_id, "assistant", answer or "", tools_used=tools_used or [])
+        store.insert_chat_log(session_id, "user", user_msg)
         return True
     except Exception as e:                      # noqa: BLE001
-        _logger.warning("[对话历史] 保存对话失败: %s", e)
+        _logger.warning("[对话历史] 保存提问失败: %s", e)
         return False
+
+
+def complete_turn(session_id: str, answer: str,
+                  usage: dict = None, tools_used: list = None) -> bool:
+    """轮末补上回答（assistant 行）。见 `start_turn` 的拆分动机。
+
+    token 记在 **assistant 行**：拆分后提问先落库、用量到轮末才知道，
+    无法再像 `save_turn` 那样把 token 记在 user 行。会话级汇总
+    （`insert_chat_log` 内的 UPDATE 逐行累加）不受影响。
+    """
+    if not session_id:
+        return False
+    usage = usage or {}
+    try:
+        store.insert_chat_log(
+            session_id, "assistant", answer or "", tools_used=tools_used or [],
+            prompt_tokens=usage.get("prompt"),
+            completion_tokens=usage.get("completion"))
+        return True
+    except Exception as e:                      # noqa: BLE001
+        _logger.warning("[对话历史] 保存回答失败: %s", e)
+        return False
+
+
+def save_turn(session_id: str, user_msg: str, answer: str,
+              usage: dict = None, tools_used: list = None,
+              persona: str = None, model: str = None,
+              source: str = "ui") -> bool:
+    """一问一答一次落库（= `start_turn` + `complete_turn`）。
+
+    ⚠️ 2026-10-30 起聊天主流程改用拆分的两步（见 `start_turn` 的事故说明），
+    本函数保留给**确定整轮已完成**才写库的调用方，行为与旧版一致。
+    """
+    if not session_id:
+        return False
+    ok = start_turn(session_id, user_msg, persona=persona, model=model,
+                    source=source)
+    return complete_turn(session_id, answer, usage=usage, tools_used=tools_used) \
+        if ok else False
 
 
 def load_messages(session_id: str, limit: int = 200) -> list[dict]:

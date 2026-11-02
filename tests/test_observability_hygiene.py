@@ -44,8 +44,14 @@ LOG_SCOPE = ("core", "data")
 # 2026-10-24 再收紧到实测值：`core/report_audit.py` 7 处数值解析兜底补了留痕
 #   ⇒ 核心层 277 → **273**（同批还补了 `scripts/` 3 处，脚本层维持 34）。
 # ⚠️ 基线只能往下调；要往上调必须先在 PR/提交说明里解释为什么那个 except 不能记日志。
-CORE_SILENT_EXCEPT_BASELINE = 273
-SCRIPT_SILENT_EXCEPT_BASELINE = 34
+# 2026-11-01：两天新增的 13 处（核心层）/ 8 处（脚本层）静默 except 全部补了
+#   debug 级留痕（默认不输出，不产生噪音）⇒ 核心层实测仍 273（无净增），
+#   脚本层 40 → **32**，按棘轮规则下调基线。
+# 2026-11-01：Streamlit 界面归档（archive/legacy_streamlit_20261101/ui）后，
+#   ui/ 里那 43 处静默 except 一并退出扫描范围 ⇒ 实测 273 → **230**。
+#   棘轮规则照旧：只许往下调；将来若把归档的 ui/ 搬回来，这里会立刻红（这是对的）。
+CORE_SILENT_EXCEPT_BASELINE = 230
+SCRIPT_SILENT_EXCEPT_BASELINE = 32
 
 _SILENT_ABSENT = re.compile(
     r"(_logger|logging|st\.(warning|error|info|caption)|raise|warnings\.warn"

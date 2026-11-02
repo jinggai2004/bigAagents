@@ -504,6 +504,26 @@ def _render_financials(fin: Dict) -> str:
         lines.append(f"最新报告期：{fin['数据截止']}")
     if fin.get("报告期"):
         lines.append("报告期（新→旧）：" + " / ".join(str(x) for x in fin["报告期"]))
+    # 公告日与报告期**逐位对齐**：不并排写，模型就没法把"哪一期什么时候公布"对上。
+    # ⚠️ 必须**显式**渲染：下方兜底循环只认 dict 与标量，list 会被静默丢掉
+    #    （这正是"渲染器白名单"那类漂移，2026-10-30 加字段时又踩了一次）。
+    _ann = fin.get("公告日")
+    if isinstance(_ann, list) and _ann:
+        lines.append("公告日（新→旧，与报告期对齐）："
+                     + " / ".join((str(x) if x else "未回填") for x in _ann))
+    if fin.get("公告日缺失期数"):
+        lines.append(f"公告日缺失期数：{fin['公告日缺失期数']}"
+                     f"（空=未回填，不等于还没公布）")
+    if isinstance(fin.get("前视防护"), dict) and fin["前视防护"]:
+        _vp = fin["前视防护"]
+        _drop = _vp.get("已剔除") or []
+        _reasons = {}
+        for d in _drop:
+            _reasons[d.get("reason")] = _reasons.get(d.get("reason"), 0) + 1
+        lines.append(
+            f"前视防护：站在 {_vp.get('as_of')} 看，可用 {_vp.get('可用期数')}"
+            f"/{_vp.get('总期数')} 期；剔除原因 {_reasons or '无'}"
+            f"（not_announced=当时还没公布，unverified=公告日未回填）")
     if fin.get("单位"):
         lines.append(f"单位：{fin['单位']}")
     # 口径紧跟单位 —— 这是"累计数还是单季数"的唯一声明，位置必须显眼
@@ -516,7 +536,8 @@ def _render_financials(fin: Dict) -> str:
     #    与项目里"注册表加了别名、解析器不认"是同一类漂移缺陷。
     ordered = ("利润表(亿元)", "利润表单季(亿元)", "资产负债表(亿元)", "同比%",
                "同比基准(亿元)", "自算比率", "现金流量表(亿元)")
-    rendered = {"数据来源", "数据截止", "报告期", "单位", "口径", "代码", "as_of"}
+    rendered = {"数据来源", "数据截止", "报告期", "单位", "口径", "代码", "as_of",
+                "公告日", "公告日缺失期数", "前视防护", "公告日说明"}
 
     def _emit(label: str, block: dict) -> None:
         lines.append(f"【{label}】")

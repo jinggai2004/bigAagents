@@ -27,6 +27,11 @@
     python scripts/backfill_turn_share.py --workers 6
     python scripts/backfill_turn_share.py --limit 50     # 先试跑
     python scripts/backfill_turn_share.py --codes 600000,000001 --force
+    python scripts/backfill_turn_share.py --stale-days 0  # **日更**（收盘后补齐当天）
+
+⚠️ `--stale-days` 默认 1（手工补历史的语义："差一天也算新鲜"，周末/节假日不反复
+   打接口）。但收盘后日更时末行必然是昨天 ⇒ lag=1 会被判 skip，**当天永远补不上**。
+   调度任务 `turn_share_sync` 因此显式传 `--stale-days 0`。
 """
 from __future__ import annotations
 
@@ -47,9 +52,74 @@ import pandas as pd                                             # noqa: E402
 from config.paths import data_root                              # noqa: E402
 from data import bars as bars_mod                               # noqa: E402
 
+# ⚠️⚠️ 必须在 `import akshare` **之前**打这个补丁（2026-11-01 实测崩溃后加）。
+#
+# 现象：6 并发（后来降到 4 并发也一样）全量跑到第 2 秒，**整个进程** FATAL 退出：
+#   `[FATAL:partition_address_space.cc(243)] Check failed: !IsConfigurablePoolInitialized()`
+#   栈顶是 `py_mini_racer/mini_racer.dll` → V8 的 PartitionAlloc 全局池被并发初始化。
+#   这不是 Python 异常：`except Exception` 拦不住，在调度器里跑会连带杀掉当天
+#   所有剩余任务（任务台账只记到 started，看起来像"卡死"）。
+#
+# 根因（读 akshare 源码确认，不是猜的）：
+#   `akshare/stock/stock_zh_a_sina.py::stock_zh_a_daily` 里
+#       js_code = py_mini_racer.MiniRacer()   # ← **每次调用**都新建一个 V8 isolate
+#       js_code.eval(hk_js_decode)
+#       dict_list = js_code.call("d", ...)    # 解密新浪返回的 K 线串
+#   多线程同时首次构造 isolate ⇒ 全局池重复初始化 ⇒ abort()。
+#   所以"顶层 import akshare 一次"和"预热一次"都没用 —— 崩溃点在建对象，不在导入。
+#
+# 修法：
+#   · **线程局部**：每个工作线程复用自己的 isolate（V8 isolate 有线程亲和性，
+#     共享一个实例即使加锁也不安全）；
+#   · **创建锁**：只把 `MiniRacer()` 的构造串行化（崩溃点是并发创建，不是并发使用）；
+#   · 解密只占毫秒级，真正的耗时在网络请求 ⇒ 并发收益完全保留。
+#   akshare 用的是 `import py_mini_racer` + `py_mini_racer.MiniRacer()`（模块属性
+#   访问），因此替换模块属性即可生效。
+import py_mini_racer                                              # noqa: E402
+from py_mini_racer import MiniRacer as _RealMiniRacer             # noqa: E402
+
+_V8_CREATE_LOCK = threading.Lock()
+_V8_TLS = threading.local()
+
+
+class _ThreadLocalMiniRacer:
+    """`py_mini_racer.MiniRacer` 的线程局部单例包装（构造加锁）。见上方说明。"""
+
+    def __init__(self):
+        racer = getattr(_V8_TLS, "racer", None)
+        if racer is None:
+            with _V8_CREATE_LOCK:            # 串行化 V8 创建 —— 崩溃就发生在这里
+                racer = _RealMiniRacer()
+            _V8_TLS.racer = racer
+        self._racer = racer
+
+    def eval(self, *args, **kwargs):
+        return self._racer.eval(*args, **kwargs)
+
+    def call(self, *args, **kwargs):
+        return self._racer.call(*args, **kwargs)
+
+    def __getattr__(self, item):             # 其余属性透传（size/statistics 等）
+        return getattr(self._racer, item)
+
+
+py_mini_racer.MiniRacer = _ThreadLocalMiniRacer
+
+# akshare 的 V8 依赖已被上面的补丁接管；它导入失败也不致命（缺包时任务报 fail
+# 而不是崩）：`ak` 为 None 时 `_fetch_one` 早退。
+try:
+    import akshare as ak
+except Exception as _e:                                        # noqa: BLE001
+    ak = None
+    _logger_import_error = _e
+
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(message)s")
 _logger = logging.getLogger("backfill_turn_share")
+
+if ak is None:                                                 # 见上方导入块的说明
+    _logger.warning("[换手回填] akshare 导入失败（%s）⇒ 本次无法拉取任何数据",
+                    _logger_import_error)
 
 OUT_DIR = os.path.join(data_root(), "data", "panel", "turn_share")
 MANIFEST = os.path.join(data_root(), "data", "panel", "turn_share_manifest.json")
@@ -58,6 +128,9 @@ MANIFEST = os.path.join(data_root(), "data", "panel", "turn_share_manifest.json"
 START = "20160101"
 
 # 末行距今超过这么多交易日才重拉（周末/节假日不反复打接口）
+# ⚠️ 2026-11-01：默认值 1 只适合**手工补历史**，日更场景会**永久少一天** ——
+#    收盘后跑时末行必然是昨天（lag=1）⇒ `lag <= 1` 直接 skip，当天数据永远补不上。
+#    日更调用方必须传 `--stale-days 0`（见 core.scheduler.run_turn_share_job）。
 STALE_TRADING_DAYS = 1
 
 _io_lock = threading.Lock()
@@ -91,7 +164,8 @@ def _existing_last(code: str) -> str | None:
     return str(d["date"].max())[:10] if len(d) else None
 
 
-def _fetch_one(code: str, *, force: bool, end: str) -> tuple:
+def _fetch_one(code: str, *, force: bool, end: str,
+               stale_days: int = STALE_TRADING_DAYS) -> tuple:
     """返回 (code, status, rows)；status ∈ ok / skip / fail。"""
     path = os.path.join(OUT_DIR, f"{code}.parquet")
     if not force:
@@ -100,12 +174,14 @@ def _fetch_one(code: str, *, force: bool, end: str) -> tuple:
             return (code, "skip", 0)
         if last:
             lag = bars_mod.trading_day_lag(last, end)
-            if lag is not None and lag <= STALE_TRADING_DAYS:
+            if lag is not None and lag <= stale_days:
                 return (code, "skip", 0)
     sym = _sina_symbol(code)
     if sym is None:
         return (code, "fail", "非沪深/北交所代码")
-    import akshare as ak
+    if ak is None:
+        # 不在线程里重试导入：V8 初始化竞态会让进程 abort（见模块顶部说明）
+        return (code, "fail", "akshare 不可用（见启动日志）")
     for attempt in (1, 2):
         try:
             raw = ak.stock_zh_a_daily(symbol=sym, start_date=START,
@@ -158,13 +234,28 @@ def _write_manifest(started: str, elapsed: float, end: str) -> None:
         _logger.warning("[换手回填] manifest 写入失败: %s", e)
 
 
-def main() -> int:
+def main(argv: list | None = None) -> int:
+    """入口。`argv=None` 时读 `sys.argv`（命令行）；调度器传显式列表。
+
+    ⚠️ 必须支持显式 argv：本函数会被 `core.scheduler.run_turn_share_job` 在
+    **调度器进程内**直接调用，而此时 `sys.argv` 是 exe/uvicorn 的参数
+    （如 `--host 127.0.0.1`）⇒ argparse 会把它们当未知参数 `exit(2)`。
+    """
     ap = argparse.ArgumentParser()
-    ap.add_argument("--workers", type=int, default=6)
+    ap.add_argument("--workers", type=int, default=4,
+                    help="并发数。默认 4：6 并发曾在 V8 初始化竞态下整进程 FATAL，"
+                         "降到 4 与 BaoStock 回填的经验值一致（吞吐差别不大）")
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--codes", default="")
     ap.add_argument("--force", action="store_true")
-    args = ap.parse_args()
+    ap.add_argument("--stale-days", type=int, default=STALE_TRADING_DAYS,
+                    help="末行距参考日超过这么多交易日才重拉；日更传 0（默认 1 给手工补历史）")
+    args = ap.parse_args(argv)
+
+    # ⚠️ 计数器是**模块级全局**：调度器同进程反复调用本函数时必须清零，
+    #    否则第二轮起 ok/skip/fail 会在上一轮基础上累加，manifest 报数全错。
+    _stat.update(ok=0, skip=0, fail=0, rows=0)
+    _fails.clear()
 
     codes = [c.strip() for c in args.codes.split(",") if c.strip()] \
         or sorted(bars_mod.available_codes())
@@ -182,7 +273,8 @@ def main() -> int:
     started = time.strftime("%Y-%m-%d %H:%M:%S")
     done = 0
     with ThreadPoolExecutor(max_workers=max(1, args.workers)) as ex:
-        futs = {ex.submit(_fetch_one, c, force=args.force, end=end): c for c in codes}
+        futs = {ex.submit(_fetch_one, c, force=args.force, end=end,
+                          stale_days=args.stale_days): c for c in codes}
         for fut in as_completed(futs):
             code, status, info = fut.result()
             done += 1

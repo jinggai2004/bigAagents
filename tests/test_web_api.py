@@ -223,14 +223,14 @@ class TestDashboard:
 
     def test_health_with_heartbeat(self, client, root):
         import time
-        hb = {"pid": 999999, "jobs": 18, "ts": "2026-10-25 14:50:00",
+        hb = {"pid": 999999, "jobs": 19, "ts": "2026-10-25 14:50:00",
               "epoch": time.time() - 30, "started_at": time.time() - 600}
         (root / "temp" / "scheduler_heartbeat.json").write_text(
             json.dumps(hb), encoding="utf-8")
         d = client.get("/api/dashboard").json()["data"]["health"]["data"]
         assert d["age_seconds"] is not None and d["age_seconds"] < 60
         assert d["stale"] is False
-        assert d["jobs"] == 18
+        assert d["jobs"] == 19
         assert d["running"] is False      # 假 PID：进程检查必须如实 False
 
 

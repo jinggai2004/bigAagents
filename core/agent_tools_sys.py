@@ -975,9 +975,31 @@ def tool_data_freshness() -> dict:
         _logger.warning("[Agent工具] data_coverage 读取失败: %s", e)
         coverage_rows = [{"error": f"data_coverage 读取失败: {e}"}]
 
+    # ── 财报公告日（PIT）覆盖 ──
+    # 为什么放在"数据新鲜度"里而不是单独一个工具：助手工具数已到**预算上限 30**
+    # （`tests/test_agent_conclusion_tools.py` 硬闸门），而"公告日数据覆盖到哪了"
+    # 本身就是新鲜度问题。单只票的逐期公告日由 `tool_financials` 的 `公告日` 字段给。
+    pit = {}
+    try:
+        from db import store as _store
+        dcov = _store.fin_disclosure_coverage()
+        pit = {"已回填报告期": dcov.get("period_count", 0),
+               "总行数": dcov.get("rows", 0),
+               "最近三期": [{"报告期": r["period"], "股票数": r["n"],
+                          "公告日": f"{r['a']} ~ {r['b']}"}
+                         for r in (dcov.get("periods") or [])[:3]],
+               "说明": ("为空/覆盖低 ⇒ `tool_financials` 传 as_of 时会把查不到公告日的期"
+                        "按'未公布'剔除（fail-closed）。调度任务 fin_disclosure 每天 "
+                        "08:30 刷最近两期；历史期用 "
+                        "`py scripts/backfill_disclosure_dates.py --periods 8 --reset`")}
+    except sqlite3.Error as e:                          # noqa: BLE001
+        _logger.warning("[Agent工具] 财报公告日覆盖读取失败: %s", e)
+        pit = {"错误": f"读取失败: {e}"}
+
     return {**info,
             "本地K线面板": panel,
             "数据集覆盖(data_coverage)": coverage_rows or "（暂无记录）",
+            "财报公告日(PIT)": pit,
             "口径说明": ("个股新鲜度基准 = 面板市场级最新日（bars.panel_date_max()），"
                         "不是今天。最新日之后没有某只票的数据，可能是尚未收盘、"
                         "停牌或未回填——是'缺'不是'0'，不得当作 0 值参与计算")}

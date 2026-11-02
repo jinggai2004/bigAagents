@@ -18,6 +18,17 @@
 import os
 import sys
 
+# ── 测试专用假凭据（必须早于任何 `config.settings` 导入）────────────────
+# `config.settings.Config.validate()` 的硬性判据是"至少一个 LLM 厂商配了 Key"，
+# 不满足就**导入即抛** `ValueError: 配置校验失败`。后果：测试隐式依赖本机 `.env`
+# —— 新克隆 / CI 没有 `.env` 时，**17 个测试文件在收集阶段**整体报错，报错文案
+# 还指向"检查 .env"，与被测代码毫无关系（2026-11-02 在开源树实测）。
+#
+# 用 `setdefault` 而不是 `os.environ[...] = ...`：本机已有 `.env` 时**不覆盖**，
+# 真 Key 仍然生效；只有缺失时才补一个明显假的占位符。
+# 前缀 `sk-test-` 是刻意的：任何真实调用都会 401，不会有人误用它去跑生产。
+os.environ.setdefault("DEEPSEEK_API_KEY", "sk-test-placeholder-not-a-real-key")
+
 import pytest
 
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

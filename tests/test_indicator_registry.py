@@ -18,6 +18,8 @@ from core.indicator_registry import INDICATORS, SOURCE_LABELS
 SNAPSHOT_KEYS = {"pe", "market_cap", "turnover", "amount", "change_pct"}
 PRECISION_KEYS = {"momentum20", "volatility", "ma_bullish", "ma20_above",
                   "fund_net", "news_positive", "score"}
+# ── 论文因子扫描晋身（2026-10-30，6 个）——见 output/因子论文扫描_30因子_回测报告_2026-10-30.md
+PAPER_KEYS = {"upshd20", "turn_std20", "amihud20", "lndvol20", "mom1m", "pv_corr20"}
 
 
 # ================================================================
@@ -25,8 +27,9 @@ PRECISION_KEYS = {"momentum20", "volatility", "ma_bullish", "ma20_above",
 # ================================================================
 
 def test_exactly_twelve_indicators():
-    assert len(INDICATORS) == 12
-    assert set(INDICATORS) == SNAPSHOT_KEYS | PRECISION_KEYS
+    # 2026-10-30：12 → 18（论文因子扫描晋身 6 个，见 PAPER_KEYS）
+    assert len(INDICATORS) == 18
+    assert set(INDICATORS) == SNAPSHOT_KEYS | PRECISION_KEYS | PAPER_KEYS
 
 
 def test_registry_key_matches_indicator_key():
@@ -74,7 +77,8 @@ def test_long_aliases_present_for_disambiguation():
 
 def test_snapshot_and_precision_split():
     assert set(reg.snapshot_keys()) == SNAPSHOT_KEYS
-    assert set(reg.precision_keys()) == PRECISION_KEYS
+    # 2026-10-30 起 precision 侧含论文晋身的 6 个（同为 K 线源）
+    assert set(reg.precision_keys()) == PRECISION_KEYS | PAPER_KEYS
     assert not (set(reg.snapshot_keys()) & set(reg.precision_keys()))
 
 

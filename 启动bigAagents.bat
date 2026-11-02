@@ -12,7 +12,7 @@ rem 注意：本项目必须用装了 pytest 的解释器（系统 Python 3.12�
 rem       托管版 3.13 没有 pytest，被选中会出现"命令能跑但测试收集失败"。
 set "PY=%BIGA_PYTHON%"
 if defined PY if not exist "%PY%" ( echo [警告] BIGA_PYTHON 指向的路径不存在，已忽略: %PY% & set "PY=" )
-if not defined PY set "PY=C:\Users\OMEN\AppData\Local\Programs\Python\Python312\python.exe"
+if not defined PY set "PY=%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
 if not exist "%PY%" set "PY="
 rem ⚠️ 回退到 py 启动器时必须取它的**真实 exe 路径**：
 rem   若写成 PY="py -3"，后面 "%PY%" 会展开成 "py -3"，cmd 会去找一个
@@ -73,17 +73,17 @@ if "%SKIP_SCHED%"=="1" echo       已跳过（调度器已在运行）
 
 
 
-echo [2/4] 启动 Web 界面...
+echo [2/4] 界面请双击 dist\bigAagents\bigAagents.exe（Streamlit 已归档，本脚本不再启动它）
 
-start "bigAagents-Web" "%PY%" -m streamlit run ui\app.py --server.address 0.0.0.0 --server.port 8501 --server.headless true --browser.gatherUsageStats false
+rem 2026-11-01: Streamlit 界面已归档（archive/legacy_streamlit_20261101/ui）。界面由 exe 提供。
 
 
 
-echo [3/4] 等待服务就绪后打开浏览器...
+echo [3/4] 跳过旧 8501 页面（已归档）
 
 ping -n 13 127.0.0.1 >nul
 
-start http://localhost:8501
+rem 不再打开 8501：旧 Streamlit 页面已归档
 
 
 
@@ -93,7 +93,7 @@ echo ============================================
 
 echo  bigAagents 已启动
 
-echo    Web 界面 : http://localhost:8501
+echo    Web 界面 : 双击 dist\bigAagents\bigAagents.exe
 
 echo    调度任务 : 选股/回测/复盘/新闻（自动运行）
 

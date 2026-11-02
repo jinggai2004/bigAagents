@@ -10,6 +10,7 @@ import hashlib
 import json
 import sqlite3
 import logging
+import uuid
 from datetime import datetime, timedelta
 
 from db.models import DB_PATH, get_connection
@@ -512,6 +513,54 @@ CREATE TABLE IF NOT EXISTS scheduled_jobs (
     enabled INTEGER DEFAULT 1,      -- 0=停用（改开关也是一次热加载，不用重启）
     trading_day_only INTEGER DEFAULT 1,  -- 非交易日是否跳过（依赖行情数据的 mode 会被强制为 1）
     note TEXT DEFAULT '',
+    -- 该任务**使用哪个模型**（2026-11-01）：空 = 跟随功能默认（llm_feature_models.json）。
+    -- 非空时执行期用 `model_override()` 包住，只影响本任务，不动全局默认。
+    model TEXT DEFAULT '',
+    created_at TEXT,
+    updated_at TEXT
+);
+
+-- 内置任务（core/scheduler.py::JOBS）的**用户覆盖层**（2026-11-01）。
+-- 为什么单独一张表而不是塞进 scheduled_jobs：
+--   ① scheduled_jobs 的语义是"用户新增的任务"，cron 必填、job_id 有 custom_ 前缀约束；
+--      内置任务的排期来自代码，用户只能覆盖"备注/模型/启停"这几项**元数据**；
+--   ② 混在一起会让"任务清单 = 代码 + 数据"变成"数据里也可能有代码任务"，
+--      健康检查（心跳 job_ids vs JOB_IDS）的语义就乱了。
+-- 生效：调度器 sync 循环每轮读一次（热生效，不用重启）。
+CREATE TABLE IF NOT EXISTS builtin_job_overrides (
+    job_id TEXT PRIMARY KEY,        -- 必须命中 JOBS 里的 job_id
+    enabled INTEGER DEFAULT 1,      -- 0=停用（不注册；与自定义任务的 enabled 同义）
+    note TEXT DEFAULT '',           -- 用户备注（给"这个任务到底干什么用的"补充说明）
+    model TEXT DEFAULT '',          -- 空=跟随功能默认
+    updated_at TEXT
+);
+
+-- 用户自定义因子（2026-11-01，`core/factor_lab.py`）
+-- 语义分工要清楚：`scheduled_jobs` 是"用户新增的任务"，这里是"用户新增的因子"，
+-- 两张表都只存**用户意图**，不存计算结果（结果在 metrics JSON 里，可重算）。
+CREATE TABLE IF NOT EXISTS watch_pool (
+    code TEXT PRIMARY KEY,
+    name TEXT DEFAULT '',
+    industry TEXT DEFAULT '',
+    first_seen TEXT,             -- 首次入池日（证伪倒计时起点）
+    last_signal_date TEXT,       -- 最近一次命中左侧信号的日期
+    signals TEXT,                -- JSON 数组：orphan_plunge/post_report_plunge/org_accumulate
+    status TEXT DEFAULT 'watching',  -- watching / expired（60 天未修复=证伪嫌疑）
+    right_side TEXT,             -- JSON 数组：price_reclaim/vol_dry（观察点，非买入触发）
+    quality TEXT,                -- JSON：资质卡快照（ocf_to_np/roe/sjltz/roe_yoy）
+    meta TEXT,                   -- JSON：跌幅/行业中性/触发日
+    updated_at TEXT
+);
+CREATE TABLE IF NOT EXISTS user_factors (
+    factor_id TEXT PRIMARY KEY,     -- uf_xxxxxxxx（稳定 ID，改名不改 ID）
+    name TEXT NOT NULL,             -- 展示名（页面与日志都靠它认）
+    expr TEXT NOT NULL,             -- DSL 表达式（AST 白名单校验后才会落库）
+    kind TEXT DEFAULT 'gate',       -- gate=闸门（默认）/ score=分数（须过 A/B）
+    status TEXT DEFAULT 'draft',    -- draft/validated/rejected/applied/disabled
+    direction INTEGER DEFAULT 1,    -- +1 越高越好 / -1 越低越好（回测按样本内符号自动填）
+    gate_pct REAL DEFAULT 0.1,      -- 闸门剔除比例（apply 时用）
+    metrics TEXT,                   -- 回测结果 JSON（含 spread，供试验集复用）
+    note TEXT DEFAULT '',
     created_at TEXT,
     updated_at TEXT
 );
@@ -566,9 +615,48 @@ CREATE TABLE IF NOT EXISTS ai_wake_conditions (
     armed      INTEGER NOT NULL DEFAULT 1,
     expires_on TEXT,                   -- 到期日；过期自动失活
     note       TEXT,
+    -- M4#2（2026-10-31）：条件**为谁挂的**。'self'=阿深纸面组合自己的风控；
+    -- 'boss'=老板留言触发的（值班轮消费 ashen_messages 的那一轮挂的条件）。
+    -- 对齐 watchlist 的 owner 语义（'ashen'/'boss'）：页面与复盘要能分清
+    -- "它自己要盯的"与"老板让它盯的"，否则留言驱动的条件混在自挂风控里。
+    owner      TEXT NOT NULL DEFAULT 'self',
     created_at TEXT, updated_at TEXT,
     PRIMARY KEY (persona, cond_id)
 );
+
+-- ⑩¼ 阿深留言板（2026-10-30，M4#1）：**人对它下指令**的唯一通道。
+--    M3 只能"和它聊"（ashen_chat 只读、不影响它的决策）；留言板把话送进
+--    **下一值班轮的 prompt**，它的 summary 必须逐条回应、要盯价位就 set_wake
+--    ⇒ 才算"跟它说话有回音、有后果"。
+--    生命周期：pending（待它读）→ 某个值班轮真的跑了 LLM ⇒ consumed（带上
+--    轮次与它那轮的原话）。**轮子被跳过时不消费**——跳过轮没有 summary，
+--    消费了等于"读了没回"。进程崩溃时留言停留在 pending，下一轮补上。
+CREATE TABLE IF NOT EXISTS ashen_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    text TEXT NOT NULL,                -- 老板原话（留给它看的）
+    status TEXT NOT NULL DEFAULT 'pending',  -- pending / consumed
+    round_slot TEXT,                   -- 消费它的值班轮次（如 13:20）
+    round_summary TEXT,                -- 它那轮的回应原话（前 200 字）
+    created_at TEXT, consumed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_ashen_msg_status ON ashen_messages(status);
+
+-- 任务执行台账（2026-10-31）：调度器**唯一**的"这个时间槽跑过没有"的记录。
+-- 为什么需要：APScheduler 的 job 是内存态，进程一重启，"今天跑过没有"就全忘了。
+--   2026-10-30 的 18:10 `evening_analysis` 正好撞上重启窗口 ⇒ 静默消失，第二天
+--   才发现 TOP8 深度分析没跑（`misfire_grace_time=3600` 只管进程还活着的场景）。
+-- 主键 (job_id, run_date, slot) 就是**幂等锚点**：同一槽位写第二次会被忽略，
+--   所以"补跑"不会把已经跑过的任务再跑一遍。
+CREATE TABLE IF NOT EXISTS job_runs (
+    job_id     TEXT NOT NULL,          -- SCHEDULE 里的键（如 evening_analysis）
+    run_date   TEXT NOT NULL,          -- YYYY-MM-DD
+    slot       TEXT NOT NULL,          -- HH:MM（排期时刻；盘中类是 60 分钟粒度）
+    status     TEXT NOT NULL,          -- started / caught_up / skipped
+    detail     TEXT,
+    started_at TEXT, finished_at TEXT,
+    PRIMARY KEY (job_id, run_date, slot)
+);
+CREATE INDEX IF NOT EXISTS idx_job_runs_date ON job_runs(run_date);
 
 -- ④ 唤醒事件（口径 4 的幂等锚点）。同 (persona, code, cond_id, trade_date) 只触发一次
 --    —— 进程重启后重复扫描不会重复触发，全靠这个主键。
@@ -692,6 +780,26 @@ CREATE TABLE IF NOT EXISTS agent_config_changes (
     created_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_agent_changes_cid ON agent_config_changes(change_id);
+
+-- ⑩¾ 财报公告日（PIT，2026-10-30）：一行 = (代码, 报告期) 的**公开可得日**。
+--    为什么必须有这张表：`tool_financials` 原先直接取"最新 4 期报表"，**不知道
+--    哪一期什么时候公布**。对当前分析没影响，但任何"站在历史某天看"的场景
+--    （复盘、历史重放、将来的基本面因子）都会把**当时还没公布的财报**当成已知
+--    ⇒ 前视偏差，而它不会报错、只会让结论偏乐观。
+--
+--    ⚠️ `ann_date` 的口径是**保守下界**：来源东财业绩报表的"最新公告日期"是
+--    该报告期的**最后一次**公告日期（含更正公告），实测会晚于首次披露
+--    （2026Q1：96% 在 4 月，但个别股票标着 10-30）。用它做过滤只会"晚用"，
+--    绝不会"早用" ⇒ 方向上安全。真要首次披露日，得换巨潮逐股公告接口（慢得多）。
+CREATE TABLE IF NOT EXISTS financial_disclosures (
+    stock_code TEXT NOT NULL,
+    period TEXT NOT NULL,        -- 报告期 YYYYMMDD（如 20260630）
+    ann_date TEXT NOT NULL,      -- 公告日 YYYY-MM-DD（保守下界，口径见上）
+    source TEXT DEFAULT '',
+    fetched_at TEXT,
+    PRIMARY KEY (stock_code, period)
+);
+CREATE INDEX IF NOT EXISTS idx_fin_disc_period ON financial_disclosures(period);
 
 -- ⑩ 市场情绪参照快照（2026-10-23）。一行 = (采集日, 来源) 的**结构化指标卡**。
 --    为什么必须落库：情绪比的**绝对值没有意义**，只有"相对自身近 20 日"才有信息量
@@ -831,6 +939,56 @@ _SCHEMA_VERSION = int(hashlib.sha1(_SCHEMA.encode("utf-8")).hexdigest(), 16) % (
 # 调用里只有第一处需要真正检查。⚠️ 它**必须在版本短路之前**执行 —— 见 init_store 内注释。
 _COLUMNS_CHECKED = False
 
+# screen_picks 唯一索引（2026-10-29）：**不设进程级"已检查"标志**。
+# ⚠️ 踩过一次：测试/运维会切换 DB_PATH（每个用例一个库），进程级标志会让
+#    新库跳过建索引 ⇒ insert 的 ON CONFLICT 降级为"删同键再插" ⇒ 回填列被冲掉。
+#    sqlite_master 查询是微秒级，每次 init_store 查一次远比"静默降级"便宜。
+
+
+def _ensure_screen_picks_unique(conn) -> None:
+    """保证 `screen_picks` 在 (pick_date, stock_code) 上唯一（去重 + 建索引，幂等）。
+
+    为什么需要：同一天会跑多轮选股（盘前 09:25 / 午间 11:30 / 盘后 15:30 全流程），
+    每轮都 `insert_screen_picks` 一整份 ranked 名单 ⇒ 同日同票落多行。
+    实测 2026-10-29：220 行 / 110 只 = **2.0×**。所有统计函数早已按 (日期,代码)
+    去重读（`_dedup_screen_picks_sql` 取 id 最大），所以**结论一直没错**；
+    但原始表翻倍会让页面计数、导出、人工查库都虚高。
+
+    清理口径与统计完全一致：每个 (日期,代码) 只留 **id 最大**（最新一轮）的一行。
+    这样历史数据不需要人工判断——它只是把"统计层已经在用的去重"落到物理表。
+    """
+    try:
+        exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='screen_picks'"
+        ).fetchone()
+        if not exists:
+            return                      # 全新空库：等 executescript 建完表再来
+        has_index = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='index' "
+            "AND name='uq_screen_picks_day_code'").fetchone()
+        if not has_index:
+            dup = conn.execute(
+                "SELECT COUNT(*) FROM (SELECT 1 FROM screen_picks "
+                "GROUP BY pick_date, stock_code HAVING COUNT(*) > 1)").fetchone()[0]
+            if dup:
+                cur = conn.execute(
+                    "DELETE FROM screen_picks WHERE id NOT IN ("
+                    "  SELECT MAX(id) FROM screen_picks GROUP BY pick_date, stock_code)")
+                _logger.warning(
+                    "[store] screen_picks 清理历史重复 %d 行（%d 组同日同票，保留最新一条）",
+                    cur.rowcount, dup)
+            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_screen_picks_day_code "
+                         "ON screen_picks(pick_date, stock_code)")
+            # ⚠️ 必须在这里自己 commit：init_store 在"版本号相同"处会提前 return，
+            #    而 `finally: conn.close()` 会把未提交的 DELETE/建索引**回滚**。
+            #    实测踩过：日志打了"清理 1442 行"，库里却一行没少、索引也不存在。
+            conn.commit()
+            _logger.info("[store] screen_picks 唯一索引已建：uq_screen_picks_day_code")
+    except sqlite3.Error as e:
+        # 建索引失败不阻断建表（与 ai_wake_conditions 同样的容错口径）；
+        # 但写入侧会降级为"删同键再插"，功能不受影响。
+        _logger.warning("[store] screen_picks 唯一索引/去重失败（不阻断）: %s", e)
+
 
 def _migrate_columns(conn) -> None:
     """列迁移（幂等、**表不存在则跳过**）—— F1 双保险的执行体。
@@ -841,8 +999,14 @@ def _migrate_columns(conn) -> None:
     """
     if _table_exists(conn, "ai_wake_conditions"):
         _ensure_column(conn, "ai_wake_conditions", "threshold_pct", "REAL")
+        # M4#2（2026-10-31）：条件归属（self=自主风控 / boss=老板留言触发）
+        _ensure_column(conn, "ai_wake_conditions", "owner",
+                       "TEXT NOT NULL DEFAULT 'self'")
     if _table_exists(conn, "paper_nav"):
         _ensure_column(conn, "paper_nav", "at_cost", "INTEGER")
+    if _table_exists(conn, "scheduled_jobs"):
+        # 任务级模型覆盖（2026-11-01）：空=跟随功能默认
+        _ensure_column(conn, "scheduled_jobs", "model", "TEXT DEFAULT ''")
     # B2③（2026-10-18 审查）：PE 允许双口径（东财实时 / 本地快照新浪口径），
     # `screen_picks` 必须记录本次评分用的是哪一个 —— 否则 IC/质量评估混口径。
     if _table_exists(conn, "screen_picks"):
@@ -964,6 +1128,12 @@ def init_store(force: bool = False):
         if not _COLUMNS_CHECKED or force:
             _migrate_columns(conn)
             _COLUMNS_CHECKED = True
+        # ⚠️ screen_picks 的业务幂等键 = (pick_date, stock_code)（2026-10-29）
+        #    盘前/午间/盘后多轮选股会重复落库（实测 10-29 220 行 / 110 只 = 2.0×），
+        #    所有统计虽然已按 (日期,代码) 去重读，但原始表翻倍会让页面计数/导出虚高。
+        #    必须在**版本短路之前**跑：否则长期运行的旧库会早退，索引永远建不上，
+        #    而 insert_screen_picks 改成了 ON CONFLICT ⇒ 每次写入都会失败（静默丢样本）。
+        _ensure_screen_picks_unique(conn)
         if not force:
             row = conn.execute("PRAGMA user_version").fetchone()
             if row and row[0] == _SCHEMA_VERSION:
@@ -974,6 +1144,7 @@ def init_store(force: bool = False):
         #    不加这一步，长期运行的库（含真实库）会永远缺这一列，
         #    而哈希版本号却已"迁移成功"——静默缺列是最难发现的一类。
         _migrate_columns(conn)
+        _ensure_screen_picks_unique(conn)
         # ⚠️ 唤醒条件的**业务幂等键** = (persona, code, kind)（2026-10-16 修订）。
         #    单独执行 + 容错：历史库可能残留重复行（旧实现"永远 INSERT"的产物），
         #    那时建唯一索引会抛 IntegrityError —— **绝不能因为一条索引让整个建表脚本中断**
@@ -1703,6 +1874,133 @@ def list_agent_changes(*, limit: int = 50) -> list[dict]:
         conn.close()
 
 
+def upsert_fin_disclosures(rows: list[dict]) -> int:
+    """批量写入财报公告日（(stock_code, period) 幂等 upsert），返回写入行数。
+
+    语义：**后写覆盖**（last write wins）。同一 (代码, 报告期) 重抓时用新值替换。
+
+    ⚠️ 第一版写的是"`ann_date` 只向更晚推进"，**被实测打脸了**：2026-10-30 发现
+    东财 `stock_yjbb_em` 把历史 0930 期的公告日**串成了下一年的 Q3**（20250930 期
+    有 4,927 行标着 2026-10，与 20260930 期 100% 重合）。而"只向更晚推进"会让
+    这些**更晚的错误值永远无法被正确值覆盖**——防前视的规则反过来把脏数据钉死。
+    ⇒ 数据质量的把关挪到**抓取层**（来源优先级 + 公告日合理性窗口），落库只做覆盖。
+    """
+    if not rows:
+        return 0
+    init_store()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    payload = []
+    for r in rows:
+        code = str(r.get("stock_code") or "").strip()
+        period = str(r.get("period") or "").strip()
+        ann = str(r.get("ann_date") or "").strip()
+        if not (code and period and ann):
+            continue                       # 缺字段的行直接跳过（由调用方报告缺口数）
+        payload.append((code, period, ann, str(r.get("source") or ""), now))
+    if not payload:
+        return 0
+    conn = get_connection()
+    try:
+        conn.executemany(
+            """INSERT INTO financial_disclosures
+               (stock_code, period, ann_date, source, fetched_at)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(stock_code, period) DO UPDATE SET
+                 ann_date = excluded.ann_date,
+                 source = excluded.source,
+                 fetched_at = excluded.fetched_at""", payload)
+        conn.commit()
+        return len(payload)
+    except sqlite3.Error as e:
+        _logger.warning("[财报公告日] 写入失败: %s", e)
+        return 0
+    finally:
+        conn.close()
+
+
+def delete_fin_disclosures(period: str = "") -> int:
+    """删除公告日记录（period 为空 ⇒ 清空整表）。返回删除行数。
+
+    存在的理由：来源口径变更/发现污染时必须能重来。不清掉的话，
+    幂等 upsert 只覆盖"本次抓到的期"，抓不到的脏行会一直留着。
+    """
+    init_store()
+    conn = get_connection()
+    try:
+        if period:
+            cur = conn.execute("DELETE FROM financial_disclosures WHERE period = ?",
+                               (str(period).strip(),))
+        else:
+            cur = conn.execute("DELETE FROM financial_disclosures")
+        conn.commit()
+        return int(cur.rowcount or 0)
+    except sqlite3.Error as e:
+        _logger.warning("[财报公告日] 删除失败: %s", e)
+        return 0
+    finally:
+        conn.close()
+
+
+def get_fin_disclosure(stock_code: str, period: str) -> dict | None:
+    """取单个 (代码, 报告期) 的公告日记录。"""
+    init_store()
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT stock_code, period, ann_date, source, fetched_at "
+            "FROM financial_disclosures WHERE stock_code = ? AND period = ?",
+            (str(stock_code).strip(), str(period).strip())).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def list_fin_disclosures(*, stock_code: str = "", period: str = "",
+                         as_of: str = "", limit: int = 500) -> list[dict]:
+    """查公告日记录。`as_of` 给了就只返回 `ann_date <= as_of` 的记录。
+
+    ⚠️ `as_of` 过滤是**服务前视防护**用的，不是"最近更新的"：
+    传 `as_of` 表示"我站在那一天"，早于那一天公告的才算已知。
+    """
+    init_store()
+    sql = ("SELECT stock_code, period, ann_date, source, fetched_at "
+           "FROM financial_disclosures WHERE 1=1")
+    params: list = []
+    if stock_code:
+        sql += " AND stock_code = ?"
+        params.append(str(stock_code).strip())
+    if period:
+        sql += " AND period = ?"
+        params.append(str(period).strip())
+    if as_of:
+        sql += " AND ann_date <= ?"
+        params.append(str(as_of).strip())
+    sql += " ORDER BY period DESC, stock_code LIMIT ?"
+    params.append(int(limit))
+    conn = get_connection()
+    try:
+        return [dict(r) for r in conn.execute(sql, params)]
+    finally:
+        conn.close()
+
+
+def fin_disclosure_coverage() -> dict:
+    """公告日表的覆盖概况（给助手/健康检查看：抓过几个报告期、缺多少）。"""
+    init_store()
+    conn = get_connection()
+    try:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT period, COUNT(*) n, MIN(ann_date) a, MAX(ann_date) b, "
+            "MAX(fetched_at) f FROM financial_disclosures GROUP BY period "
+            "ORDER BY period DESC")]
+        total = conn.execute(
+            "SELECT COUNT(*) FROM financial_disclosures").fetchone()[0]
+        return {"periods": rows, "rows": int(total),
+                "period_count": len(rows)}
+    finally:
+        conn.close()
+
+
 def list_push_log(*, limit: int = 50) -> list[dict]:
     """推送流水（`push_log`）。`status=ok` 是幂等锚点：同 (day, channel, hash) 只发一次。"""
     init_store()
@@ -1721,7 +2019,14 @@ def sentiment_label_summary(*, days: int = 30) -> dict:
 
     返回每日 `{date, total, by_stance, by_labeler}`，外加全量 `by_stance`。
     ⚠️ `stance='unscored'` 是"判不出方向"，不是"中性" —— 单独计数、不进任何分子。
+
+    `last_date` / `stale_days`（2026-11-01）：2026-10-23 之后连续 8 天没有任何
+    标注，而系统页只显示"每日条数"——空表看起来像"没数据"，看不出"已经 8 天
+    没落了"。采集任务每天都跑（15:20），失败原因是知乎间歇性反爬（响应非 JSON）。
+    这两个字段让"断了多久"变成页面上的一个数字。
     """
+    from datetime import date as _date
+
     init_store()
     conn = get_connection()
     try:
@@ -1737,7 +2042,22 @@ def sentiment_label_summary(*, days: int = 30) -> dict:
             "SELECT labeler, COUNT(*) AS n FROM sentiment_labels "
             "GROUP BY labeler ORDER BY n DESC")]
         total = conn.execute("SELECT COUNT(*) FROM sentiment_labels").fetchone()[0]
-        return {"total": total, "per_day": per_day, "by_labeler": by_labeler}
+        last_row = conn.execute(
+            "SELECT MAX(trade_date) FROM sentiment_labels").fetchone()
+        last_date = (last_row[0] if last_row else None) or None
+        stale_days = None
+        if last_date:
+            try:
+                stale_days = (_date.today()
+                              - _date.fromisoformat(str(last_date)[:10])).days
+            except ValueError as e:
+                _logger.debug("情绪标注最新日期解析失败（stale 判据置空）: %r: %s",
+                              last_date, e)
+                stale_days = None
+        return {"total": total, "per_day": per_day, "by_labeler": by_labeler,
+                "last_date": last_date, "stale_days": stale_days,
+                # 超过 3 个自然日没有任何标注 ⇒ 页面标红（周末 2 天不算异常）
+                "stale_alert": bool(stale_days is not None and stale_days > 3)}
     finally:
         conn.close()
 
@@ -2637,30 +2957,52 @@ def analysis_stats(recent_days: int = 30) -> dict:
 def insert_screen_picks(picks: list[dict]) -> int:
     """批量写入一次选股的候选，返回写入条数（失败返回 0）。
 
+    **幂等**（2026-10-29）：业务键 = (pick_date, stock_code)。
+    同一天多轮选股（盘前/午间/盘后）不再产生重复行——后一轮覆盖前一轮的
+    评分/排名/因子（保留统计层已经在用的"最新一条"语义）。
+    ⚠️ 回填列（ret_5d/ret_20d/backfill_status）**不在覆盖列表里**：
+    重跑选股不能把已经回填好的收益冲掉。
+
     与 insert_analysis 同理：落库绝不能影响选股主流程。
     空列表直接返回 0（熊市跳过选股时就是没有候选）。
     """
     if not picks:
         return 0
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cols = ("pick_date, stock_code, stock_name, source, strategy, score,"
+            " score_coverage, price_at_pick, rank_in_run, market_state,"
+            " market_score, factors, conditions, pe_source, created_at")
+    updatable = ("stock_name, source, strategy, score, score_coverage, price_at_pick,"
+                 " rank_in_run, market_state, market_score, factors, conditions,"
+                 " pe_source, created_at")
+    sql_upsert = (
+        f"INSERT INTO screen_picks ({cols}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        " ON CONFLICT(pick_date, stock_code) DO UPDATE SET "
+        + ", ".join(f"{c} = excluded.{c}" for c in updatable.split(", ")))
+    sql_plain = f"INSERT INTO screen_picks ({cols}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    rows = [(p.get("pick_date"), p.get("stock_code"), p.get("stock_name"),
+             p.get("source", "ui"), p.get("strategy"), p.get("score"),
+             p.get("score_coverage"), p.get("price_at_pick"),
+             p.get("rank_in_run"), p.get("market_state"), p.get("market_score"),
+             json.dumps(p.get("factors") or {}, ensure_ascii=False, default=str),
+             json.dumps(p.get("conditions") or {}, ensure_ascii=False, default=str),
+             p.get("pe_source"), now)
+            for p in picks]
     try:
         init_store()
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         conn = get_connection()
         try:
-            conn.executemany(
-                """INSERT INTO screen_picks
-                   (pick_date, stock_code, stock_name, source, strategy, score,
-                    score_coverage, price_at_pick, rank_in_run, market_state,
-                    market_score, factors, conditions, pe_source, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                [(p.get("pick_date"), p.get("stock_code"), p.get("stock_name"),
-                  p.get("source", "ui"), p.get("strategy"), p.get("score"),
-                  p.get("score_coverage"), p.get("price_at_pick"),
-                  p.get("rank_in_run"), p.get("market_state"), p.get("market_score"),
-                  json.dumps(p.get("factors") or {}, ensure_ascii=False, default=str),
-                  json.dumps(p.get("conditions") or {}, ensure_ascii=False, default=str),
-                  p.get("pe_source"),
-                  now) for p in picks])
+            try:
+                conn.executemany(sql_upsert, rows)
+            except sqlite3.OperationalError as e:
+                # 唯一索引没建成（历史库/清理失败）⇒ 降级为"删同键再插"，
+                # 语义与 upsert 一致，但会牺牲其他来源同日的行——因此只对该批键删。
+                _logger.warning("[选股历史] upsert 不可用，降级为删同键再插: %s", e)
+                for p in picks:
+                    conn.execute(
+                        "DELETE FROM screen_picks WHERE pick_date = ? AND stock_code = ?",
+                        (p.get("pick_date"), p.get("stock_code")))
+                conn.executemany(sql_plain, rows)
             conn.commit()
             return len(picks)
         finally:
@@ -3581,7 +3923,7 @@ def data_coverage_summary(dataset: str = "market_snapshot") -> dict:
 #    用户会看到一个"自己没设置过"的执行时刻（"缺就是缺，不补造"）。
 
 _JOB_FIELDS = ("job_id", "name", "mode", "cron", "enabled",
-               "trading_day_only", "note", "created_at", "updated_at")
+               "trading_day_only", "note", "model", "created_at", "updated_at")
 
 
 def _row_to_scheduled_job(row) -> dict:
@@ -3646,21 +3988,21 @@ def upsert_scheduled_job(job: dict) -> str:
         if exists:
             conn.execute(
                 """UPDATE scheduled_jobs SET name=?, mode=?, cron=?, enabled=?,
-                       trading_day_only=?, note=?, updated_at=? WHERE job_id=?""",
+                       trading_day_only=?, note=?, model=?, updated_at=? WHERE job_id=?""",
                 (job.get("name") or job_id, job.get("mode") or "", cron_text,
                  1 if job.get("enabled", True) else 0,
                  1 if job.get("trading_day_only", True) else 0,
-                 job.get("note") or "", now, job_id))
+                 job.get("note") or "", job.get("model") or "", now, job_id))
         else:
             conn.execute(
                 """INSERT INTO scheduled_jobs
                        (job_id, name, mode, cron, enabled, trading_day_only,
-                        note, created_at, updated_at)
-                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                        note, model, created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
                 (job_id, job.get("name") or job_id, job.get("mode") or "", cron_text,
                  1 if job.get("enabled", True) else 0,
                  1 if job.get("trading_day_only", True) else 0,
-                 job.get("note") or "", now, now))
+                 job.get("note") or "", job.get("model") or "", now, now))
         conn.commit()
     finally:
         conn.close()
@@ -3687,6 +4029,202 @@ def delete_scheduled_job(job_id: str) -> bool:
     conn = get_connection()
     try:
         cur = conn.execute("DELETE FROM scheduled_jobs WHERE job_id = ?", (job_id,))
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+# ── 内置任务的用户覆盖层（2026-11-01）────────────────────────────────
+# 内置任务的排期/执行逻辑在代码里（`core/scheduler.JOBS`），用户只能覆盖
+# **元数据**：启停 / 备注 / 使用模型。一行 = 一个被覆盖过的内置任务；
+# 没覆盖过的任务查不到行（调用方按"默认值"处理，不要造默认行）。
+_BUILTIN_OVERRIDE_FIELDS = ("job_id", "enabled", "note", "model", "updated_at")
+
+
+def list_builtin_overrides() -> dict:
+    """`{job_id: {enabled, note, model, updated_at}}`（只含被覆盖过的）。"""
+    init_store()
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            f"SELECT {', '.join(_BUILTIN_OVERRIDE_FIELDS)} "
+            f"FROM builtin_job_overrides").fetchall()
+        out = {}
+        for r in rows:
+            d = {k: r[k] for k in _BUILTIN_OVERRIDE_FIELDS}
+            d["enabled"] = bool(d.get("enabled", 1))
+            out[str(d["job_id"])] = d
+        return out
+    finally:
+        conn.close()
+
+
+def get_builtin_override(job_id: str) -> dict:
+    """单条覆盖；没覆盖过返回 `{}`（调用方按代码默认值处理）。"""
+    return list_builtin_overrides().get(str(job_id), {})
+
+
+def set_builtin_override(job_id: str, *, enabled: bool | None = None,
+                         note: str | None = None,
+                         model: str | None = None) -> dict:
+    """写内置任务的覆盖（**局部更新**：传 None 的字段保持原值）。
+
+    ⚠️ 不能整行覆盖：页面一次只改一项（比如只点启停），整行覆盖会把
+       note/model 一起清空——"改开关顺手抹掉备注"是这类接口最常见的坑。
+
+    Returns: 覆盖后的完整记录。
+    """
+    job_id = str(job_id or "").strip()
+    if not job_id:
+        raise ValueError("job_id 不能为空")
+    init_store()
+    conn = get_connection()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        row = conn.execute(
+            "SELECT enabled, note, model FROM builtin_job_overrides WHERE job_id=?",
+            (job_id,)).fetchone()
+        cur_enabled = int(row[0]) if row else 1
+        cur_note = (row[1] or "") if row else ""
+        cur_model = (row[2] or "") if row else ""
+        enabled_v = cur_enabled if enabled is None else (1 if enabled else 0)
+        note_v = cur_note if note is None else str(note)[:200]
+        model_v = cur_model if model is None else str(model)[:80]
+        conn.execute(
+            """INSERT INTO builtin_job_overrides (job_id, enabled, note, model, updated_at)
+               VALUES (?,?,?,?,?)
+               ON CONFLICT(job_id) DO UPDATE SET
+                 enabled=excluded.enabled, note=excluded.note,
+                 model=excluded.model, updated_at=excluded.updated_at""",
+            (job_id, enabled_v, note_v, model_v, now))
+        conn.commit()
+        return {"job_id": job_id, "enabled": bool(enabled_v),
+                "note": note_v, "model": model_v, "updated_at": now}
+    finally:
+        conn.close()
+
+
+def delete_builtin_override(job_id: str) -> bool:
+    """删掉覆盖行（= 恢复代码默认：启用、无备注、跟随默认模型）。"""
+    init_store()
+    conn = get_connection()
+    try:
+        cur = conn.execute("DELETE FROM builtin_job_overrides WHERE job_id = ?",
+                           (str(job_id),))
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------- 用户因子
+# 配置表（不参与保留策略清理）——删了就没法重算，用户还得重填表达式。
+_USER_FACTOR_FIELDS = ("factor_id", "name", "expr", "kind", "status", "direction",
+                       "gate_pct", "note", "created_at", "updated_at")
+
+
+def _row_to_user_factor(row) -> dict:
+    d = dict(zip(_USER_FACTOR_FIELDS, row[:-1]))
+    try:
+        d["metrics"] = json.loads(row[-1]) if row[-1] else {}
+    except (TypeError, ValueError) as e:
+        _logger.debug("user_factors.metrics 不是合法 JSON（按空处理）: %s", e)
+        d["metrics"] = {}
+    return d
+
+
+def list_user_factors(status: str = None) -> list[dict]:
+    """全部用户因子（新的在前）。`status` 给了就只返该状态。"""
+    init_store()
+    conn = get_connection()
+    try:
+        sql = ("SELECT factor_id, name, expr, kind, status, direction, gate_pct,"
+               " note, created_at, updated_at, metrics FROM user_factors")
+        args: list = []
+        if status:
+            sql += " WHERE status = ?"
+            args.append(status)
+        sql += " ORDER BY created_at DESC, name"
+        return [_row_to_user_factor(r) for r in conn.execute(sql, args)]
+    finally:
+        conn.close()
+
+
+def get_user_factor(factor_id: str) -> dict | None:
+    init_store()
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT factor_id, name, expr, kind, status, direction, gate_pct,"
+            " note, created_at, updated_at, metrics FROM user_factors"
+            " WHERE factor_id = ?", (str(factor_id),)).fetchone()
+        return _row_to_user_factor(row) if row else None
+    finally:
+        conn.close()
+
+
+def upsert_user_factor(factor: dict) -> dict:
+    """新增或更新（给了 `factor_id` 且存在=更新）。
+
+    ⚠️ 更新时**允许改名**（name 不是主键），但 `factor_id` 不变——否则试验集里
+    这条因子的历史贡献会跟着断掉，DSR 的试验次数就会被"改名重来"绕过。
+    """
+    init_store()
+    fid = (factor.get("factor_id") or "").strip()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn = get_connection()
+    try:
+        if not fid:
+            fid = "uf_" + uuid.uuid4().hex[:10]
+        exists = conn.execute("SELECT 1 FROM user_factors WHERE factor_id = ?",
+                              (fid,)).fetchone()
+        metrics = factor.get("metrics")
+        metrics_text = json.dumps(metrics, ensure_ascii=False) if metrics else None
+        if exists:
+            conn.execute(
+                "UPDATE user_factors SET name=?, expr=?, kind=?, status=?,"
+                " direction=?, gate_pct=?, metrics=?, note=?, updated_at=?"
+                " WHERE factor_id=?",
+                (factor.get("name") or fid, factor.get("expr") or "",
+                 factor.get("kind") or "gate", factor.get("status") or "draft",
+                 int(factor.get("direction") or 1),
+                 float(factor.get("gate_pct") or 0.1), metrics_text,
+                 factor.get("note") or "", now, fid))
+        else:
+            conn.execute(
+                "INSERT INTO user_factors (factor_id, name, expr, kind, status,"
+                " direction, gate_pct, metrics, note, created_at, updated_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (fid, factor.get("name") or fid, factor.get("expr") or "",
+                 factor.get("kind") or "gate", factor.get("status") or "draft",
+                 int(factor.get("direction") or 1),
+                 float(factor.get("gate_pct") or 0.1), metrics_text,
+                 factor.get("note") or "", now, now))
+        conn.commit()
+    finally:
+        conn.close()
+    return get_user_factor(fid) or {}
+
+
+def set_user_factor_status(factor_id: str, status: str) -> dict:
+    init_store()
+    conn = get_connection()
+    try:
+        conn.execute("UPDATE user_factors SET status=?, updated_at=? WHERE factor_id=?",
+                     (status, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), str(factor_id)))
+        conn.commit()
+    finally:
+        conn.close()
+    return get_user_factor(factor_id) or {}
+
+
+def delete_user_factor(factor_id: str) -> bool:
+    init_store()
+    conn = get_connection()
+    try:
+        cur = conn.execute("DELETE FROM user_factors WHERE factor_id = ?",
+                           (str(factor_id),))
         conn.commit()
         return cur.rowcount > 0
     finally:
@@ -3986,16 +4524,17 @@ def upsert_ai_wake_condition(persona: str, cond: dict) -> int:
         conn.execute(
             """INSERT INTO ai_wake_conditions (persona, cond_id, code, kind,
                     threshold, threshold_pct, wake_at, once, armed, expires_on, note,
-                    created_at, updated_at)
+                    owner, created_at, updated_at)
                VALUES (:persona, :cond_id, :code, :kind, :threshold, :threshold_pct,
                     :wake_at, :once, :armed, :expires_on, :note,
-                    :created_at, :updated_at)
+                    :owner, :created_at, :updated_at)
                ON CONFLICT(persona, cond_id) DO UPDATE SET
                     code=excluded.code, kind=excluded.kind,
                     threshold=excluded.threshold, threshold_pct=excluded.threshold_pct,
                     wake_at=excluded.wake_at,
                     once=excluded.once, armed=excluded.armed,
                     expires_on=excluded.expires_on, note=excluded.note,
+                    owner=excluded.owner,
                     updated_at=excluded.updated_at""",
             {"persona": persona, "cond_id": int(cond["cond_id"]),
              "code": cond.get("code"), "kind": cond.get("kind"),
@@ -4005,6 +4544,8 @@ def upsert_ai_wake_condition(persona: str, cond: dict) -> int:
              "once": 1 if cond.get("once", True) else 0,
              "armed": 1 if cond.get("armed", True) else 0,
              "expires_on": cond.get("expires_on"), "note": cond.get("note"),
+             # 归属（M4#2）：缺省 'self'；值班轮因老板留言挂的条件传 'boss'
+             "owner": str(cond.get("owner") or "self"),
              "created_at": now, "updated_at": now})
         conn.commit()
         return int(cond["cond_id"])
@@ -4012,15 +4553,83 @@ def upsert_ai_wake_condition(persona: str, cond: dict) -> int:
         conn.close()
 
 
+# ── 阿深留言板（2026-10-30，M4#1）────────────────────────────────
+
+def add_ashen_message(text: str) -> int | None:
+    """老板给阿深留一条话（status=pending）。返回行 id；空文本返回 None。"""
+    t = str(text or "").strip()
+    if not t:
+        return None
+    init_store()
+    conn = get_connection()
+    try:
+        cur = conn.execute(
+            "INSERT INTO ashen_messages (text, status, created_at) "
+            "VALUES (?, 'pending', ?)",
+            (t[:500], datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+        conn.commit()
+        return int(cur.lastrowid or 0)
+    finally:
+        conn.close()
+
+
+def pending_ashen_messages(limit: int = 5) -> list[dict]:
+    """待阿深读的留言（FIFO，最多 limit 条——一轮塞太多会稀释它该干的事）。"""
+    init_store()
+    conn = get_connection()
+    try:
+        return [dict(r) for r in conn.execute(
+            "SELECT id, text, created_at FROM ashen_messages "
+            "WHERE status = 'pending' ORDER BY id LIMIT ?", (int(limit),))]
+    finally:
+        conn.close()
+
+
+def consume_ashen_messages(round_slot: str, round_summary: str) -> int:
+    """值班轮真的跑完 LLM 后，把当前 pending 的留言标记为已读。
+
+    ⚠️ 只在**真的调了模型**的轮里调用：跳过轮没有 summary，消费了等于"读了没回"。
+    """
+    init_store()
+    conn = get_connection()
+    try:
+        cur = conn.execute(
+            "UPDATE ashen_messages SET status = 'consumed', round_slot = ?, "
+            "round_summary = ?, consumed_at = ? "
+            "WHERE status = 'pending'",
+            (str(round_slot or ""), str(round_summary or "")[:200],
+             datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+        conn.commit()
+        return int(cur.rowcount or 0)
+    finally:
+        conn.close()
+
+
+def list_ashen_messages(limit: int = 20) -> list[dict]:
+    """留言台账（新→旧），页面显示"哪些已回应、它当时说了什么"。"""
+    init_store()
+    conn = get_connection()
+    try:
+        return [dict(r) for r in conn.execute(
+            "SELECT id, text, status, round_slot, round_summary, created_at, "
+            "consumed_at FROM ashen_messages ORDER BY id DESC LIMIT ?",
+            (int(limit),))]
+    finally:
+        conn.close()
+
+
 def list_ai_wake_conditions(*, persona: str = None, armed_only: bool = True,
-                            trade_date: str = None) -> list[dict]:
+                            trade_date: str = None,
+                            owner: str = None) -> list[dict]:
     """列出唤醒条件。trade_date 给了就顺带过滤掉已过期（expires_on < trade_date）的条目
-    —— 判定侧不判过期条件，但**不在这里删行**（保留台账供复盘）。"""
+    —— 判定侧不判过期条件，但**不在这里删行**（保留台账供复盘）。
+    owner（M4#2）：'self'=自主风控 / 'boss'=老板留言触发；None=不过滤。"""
     init_store()
     conn = get_connection()
     try:
         sql = ("SELECT persona, cond_id, code, kind, threshold, threshold_pct, "
-               "wake_at, once, armed, expires_on, note "
+               "wake_at, once, armed, expires_on, note, "
+               "COALESCE(owner, 'self') AS owner "
                "FROM ai_wake_conditions WHERE 1=1")
         args: list = []
         if persona:
@@ -4031,9 +4640,12 @@ def list_ai_wake_conditions(*, persona: str = None, armed_only: bool = True,
         if trade_date:
             sql += " AND (expires_on IS NULL OR expires_on >= ?)"
             args.append(trade_date)
+        if owner:
+            sql += " AND COALESCE(owner, 'self')=?"
+            args.append(owner)
         sql += " ORDER BY persona, cond_id"
         keys = ("persona", "cond_id", "code", "kind", "threshold", "threshold_pct",
-                "wake_at", "once", "armed", "expires_on", "note")
+                "wake_at", "once", "armed", "expires_on", "note", "owner")
         return [dict(zip(keys, r)) for r in conn.execute(sql, args)]
     finally:
         conn.close()
@@ -4865,3 +5477,111 @@ def list_routine_runs(trade_date: str = None, persona: str = None,
                 r[out_key] = []
                 r[out_key + "_raw"] = raw
     return rows
+
+
+# ── 任务执行台账（2026-10-31）────────────────────────────────────
+def record_job_run(job_id: str, run_date: str, slot: str, status: str = "started",
+                   detail: str = None) -> bool:
+    """记一次任务执行。**幂等**：同 (job_id, run_date, slot) 只保留第一条。
+
+    Returns:
+        True = 新写入；False = 该槽位已有记录（被忽略）。
+    """
+    conn = get_connection()
+    try:
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO job_runs "
+            "(job_id, run_date, slot, status, detail, started_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (str(job_id), str(run_date), str(slot), str(status), detail,
+             datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def finish_job_run(job_id: str, run_date: str, slot: str,
+                   status: str = "done", elapsed: float = None,
+                   detail: str = None) -> int:
+    """收尾更新一条执行台账（写 `status` / `finished_at`）。返回受影响行数。
+
+    ## 为什么需要它（2026-11-01）
+
+    `record_job_run` 只在**入口**写一行 `status='started'`、`finished_at` 留 NULL，
+    而全仓没有任何 UPDATE ⇒ 这两列是**死列**：台账永远显示"启动了但永不结束"，
+    既答不出"这个任务成功没有"，也答不出"跑了多久"（实测 13/13 行为 NULL）。
+
+    ## 语义边界
+
+    - **不插入**：只更新入口已写的那条（`record_job_run` 是唯一插入方）。
+      返回 0 说明入口那次写入失败过 —— 不是错误，调用方不必处理。
+    - 带 `AND status = 'started'` ⇒ **幂等**：同一槽位重复执行（手动重放）时
+      第二次 UPDATE 命中 0 行，`detail` 不会把耗时追加两遍。
+    - `status` 只区分 `done` / `error`。被交易日/上游依赖检查**跳过**的槽位走的是
+      `return` 而不是异常，所以也会记 `done` —— 这是刻意的：`has_job_run` 的补跑
+      判据本来就不看 status（"记过就算跑过"，避免崩溃后死循环重跑），把"跳过"
+      记成 done 不会让补跑逻辑变味。要确认"到底跑没跑"，看日志里的"跳过"行。
+    - `elapsed` 拼进 `detail` 而**不新加列**：耗时本来就是 detail 的一部分，
+      新加列要 `_ensure_column` 才能兼容旧库，没必要为它付这个代价。
+
+    Args:
+        status: `"done"`（正常返回，含被跳过）或 `"error"`（抛了异常）。
+        elapsed: 秒；给了才把耗时拼进 detail。
+        detail: 覆盖入口写的 job_desc；None 表示"保留原值、只追加耗时"。
+    """
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    # 列名部分是**本函数内的常量**，值一律走 `?` 占位（不拼外部输入）。
+    sets = ["status = ?", "finished_at = ?"]
+    params: list = [str(status), now]
+    if elapsed is not None:
+        secs = f" · {float(elapsed):.1f}s"
+        if detail:
+            sets.append("detail = ?")
+            params.append(f"{str(detail)}{secs}")
+        else:
+            sets.append("detail = COALESCE(detail, '') || ?")
+            params.append(secs)
+    elif detail:
+        sets.append("detail = ?")
+        params.append(str(detail))
+    params += [str(job_id), str(run_date), str(slot)]
+    conn = get_connection()
+    try:
+        cur = conn.execute(
+            "UPDATE job_runs SET " + ", ".join(sets) +
+            " WHERE job_id = ? AND run_date = ? AND slot = ? AND status = 'started'",
+            tuple(params))
+        conn.commit()
+        return cur.rowcount
+    finally:
+        conn.close()
+
+
+def has_job_run(job_id: str, run_date: str, slot: str) -> bool:
+    """该槽位是否已有记录（不论 status）。补跑判据只认"记过没有"。"""
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM job_runs WHERE job_id = ? AND run_date = ? AND slot = ?",
+            (str(job_id), str(run_date), str(slot))).fetchone()
+        return row is not None
+    finally:
+        conn.close()
+
+
+def list_job_runs(run_date: str = None, limit: int = 200) -> list:
+    """按日期列台账（新→旧），给排查与页面用。"""
+    conn = get_connection()
+    try:
+        if run_date:
+            rows = conn.execute(
+                "SELECT * FROM job_runs WHERE run_date = ? "
+                "ORDER BY slot, job_id LIMIT ?", (str(run_date), int(limit))).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM job_runs ORDER BY run_date DESC, slot DESC LIMIT ?",
+                (int(limit),)).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()

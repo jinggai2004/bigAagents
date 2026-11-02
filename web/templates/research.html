@@ -108,6 +108,16 @@
       </table>
     </div>
 
+    <div class="pn gap r" style="animation-delay:.34s">
+      <div class="ph"><b>🧩 Brinson 行业归因</b><span id="brin-note">—</span></div>
+      <div class="pb grid3" id="brin-summary"><div class="empty">读取中…</div></div>
+      <div class="pb lst" id="brin-warn"></div>
+      <table>
+        <thead><tr><th>行业</th><th>配置</th><th>选股</th><th>交互</th><th>合计</th></tr></thead>
+        <tbody id="brin-body"><tr><td colspan="5" class="empty">读取中…</td></tr></tbody>
+      </table>
+    </div>
+
     <div class="ft" id="ft">连接 API 中…</div>
   </div>
 </main>
@@ -376,6 +386,47 @@
       : '<tr><td colspan="7" class="empty">无可展示回合（全部 degraded 或无成交）</td></tr>';
   }
 
+  // ---------------------------------------------------------------- Brinson 归因
+  // 三个效应的单位是**小数**（0.0894 = 8.94%），而 pct() 收的是"已经是百分数"
+  // 的值 ⇒ 必须 ×100 再传，否则 +8.94% 会显示成 +0.09%。
+  function renderBrinson(z) {
+    const detail = (z.error && (z.error.detail || z.error.msg)) || '';
+    if (!z.ok) {
+      $('#brin-summary').innerHTML = '<div class="empty">' + errText(z.error) + ' · ' + esc(detail) + '</div>';
+      $('#brin-body').innerHTML = '<tr><td colspan="5" class="empty">' + errText(z.error) + '</td></tr>';
+      $('#brin-warn').innerHTML = '';
+      $('#brin-note').textContent = errText(z.error);
+      return;
+    }
+    const d = z.data, s = d.summary || {}, sz = d.size_profile || {};
+    $('#brin-note').textContent = d.periods_used + ' 期 · ' + (d.periods_range || []).join(' ~ ') +
+      ' · 规模中位 ' + (sz.median == null ? '—' : sz.median) + ' 只 · ' + esc(d.source || '');
+    const cards = [
+      ['组合收益', s.portfolio_return, '等权持有'],
+      ['基准收益', s.benchmark_return, '全市场等权'],
+      ['超额', s.excess, '组合−基准'],
+      ['配置效应', s.alloc, '押对行业'],
+      ['选股效应', s.select, '行业内选股'],
+      ['交互效应', s.inter, '两者叠加'],
+    ];
+    $('#brin-summary').innerHTML = cards.map(c => {
+      const v = c[1] == null ? null : Number(c[1]) * 100;
+      return '<div class="pn"><div class="ph"><b>' + esc(c[0]) + '</b><span>' + esc(c[2]) + '</span></div>' +
+        '<div class="pb"><div class="v num ' + cls(v) + '">' + pct(v, 2) + '</div></div></div>';
+    }).join('');
+    const warns = d.warnings || [];
+    $('#brin-warn').innerHTML = warns.map(w =>
+      '<div class="li"><span class="k">⚠ 口径</span><span class="v">' + esc(w) + '</span></div>').join('');
+    const rows = d.top_industries || [];
+    $('#brin-body').innerHTML = rows.length ? rows.map(r =>
+      '<tr><td class="flat">' + esc(r.industry) + '</td>' +
+      '<td class="num ' + cls(r.alloc) + '">' + pct(Number(r.alloc) * 100, 3) + '</td>' +
+      '<td class="num ' + cls(r.select) + '">' + pct(Number(r.select) * 100, 3) + '</td>' +
+      '<td class="num ' + cls(r.inter) + '">' + pct(Number(r.inter) * 100, 3) + '</td>' +
+      '<td class="num ' + cls(r.total) + '">' + pct(Number(r.total) * 100, 3) + '</td></tr>').join('')
+      : '<tr><td colspan="5" class="empty">无行业明细</td></tr>';
+  }
+
   // ---------------------------------------------------------------- 启动
   if (location.protocol === 'file:') {
     ft.textContent = '本地预览 · 未连接 API';
@@ -392,13 +443,14 @@
 
   Promise.all([get('/api/research/backtest'), get('/api/research/factors'), get('/api/meta'),
                get('/api/research/backtest/validate'), get('/api/research/walkforward'),
-               get('/api/research/attributions')])
-    .then(([bt, fa, meta, va, wf, at]) => {
+               get('/api/research/attributions'), get('/api/research/brinson')])
+    .then(([bt, fa, meta, va, wf, at, br]) => {
       renderBacktest(bt);
       renderFactors(fa);
       renderValidate(va);
       renderWalkforward(wf);
       renderAttributions(at);
+      renderBrinson(br);
       const demo = (window.bigaDemo ? bigaDemo.collect() : []);
       ft.textContent = 'API ' + meta.data.version + ' · 回测 ' + (bt.as_of || '—') +
         ' · 因子 ' + (fa.ok ? (fa.data.generated_at || '—') : errText(fa.error)) +

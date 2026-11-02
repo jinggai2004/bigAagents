@@ -152,10 +152,12 @@ def _picks_dir() -> str:
     if DAILY_PICKS_DIR:
         return DAILY_PICKS_DIR
     import os as _os
-    from config.paths import app_root as _app_root
-    # ⚠️ 用 `app_root()` 而不是 `__file__`：frozen 下 `__file__` 在只读的
-    #    `_internal/` 里，`output/` 实际在 exe 同级。
-    return _os.path.join(_app_root(), "output", "daily_picks")
+    from config.paths import data_root as _data_root
+    # ⚠️ 用 `data_root()`（2026-10-30 从 app_root 改）：与写入方
+    #    `core/pipeline.OUTPUT_DIR`（data_root/output/daily_picks）同口径 ——
+    #    分发布局里两者可能不同目录，读写不同目录会变成"永远读不到当日名单"。
+    #    也不用 `__file__`：frozen 下它在只读的 `_internal/` 里。
+    return _os.path.join(_data_root(), "output", "daily_picks")
 
 
 def _load_daily_picks(date: str) -> list:

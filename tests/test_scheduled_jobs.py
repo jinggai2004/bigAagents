@@ -201,10 +201,21 @@ class TestJobDefinition:
         from core.scheduler import JOBS, _trading_day_modes
         gate = _trading_day_modes()
         # 排除与行情无关的任务：news（采集）与 news_review（行业评估，每天跑，
-        # 周末快讯也有价值）、watch（启停由交易时段自判）
+        # 周末快讯也有价值）、watch（启停由交易时段自判）、
+        # fin_disclosure（财报公告日，2026-10-30：公告周末也发、且不依赖当日行情）
         market_modes = {m for _id, _c, m, _d in JOBS
-                        if m not in ("news", "news_review", "watch")}
-        assert market_modes == gate
+                        if m not in ("news", "news_review", "watch",
+                                     "fin_disclosure")}
+        gate_set = set(gate)
+        # 方向一：JOBS 用到的行情类 mode **必须**都进闸门（漏一个 = 节假日照跑）
+        assert market_modes <= gate_set, f"这些 mode 没进交易日闸门：{market_modes - gate_set}"
+        # 方向二：闸门里不许有"没有任何内置任务在用、也没登记"的孤儿 mode。
+        #   下面两个是有意保留的：2026-11-01 起内置排期合并成 `ai_close`
+        #   （结算 + 净值一次做完），而拆开的 `ai_settle_close` / `ai_mark_nav`
+        #   仍留给自定义任务单排（例如只想补记净值、不想重跑结算）。
+        orphans = gate_set - market_modes
+        assert orphans == {"ai_settle_close", "ai_mark_nav"}, \
+            f"TRADING_DAY_MODES 里出现了未登记的孤儿 mode：{orphans}"
 
 
 # ================================================================
@@ -214,29 +225,37 @@ class TestJobDefinition:
 class TestConflictDetection:
 
     def test_same_time_as_builtin_review_is_flagged(self):
-        # ⚠️ D2（2026-10-18）：复盘已从 15:45 挪到 **15:50**（原来必然与 15:40 起跑
-        #    9 分钟的快照重叠）⇒ 这条断言跟着挪，否则测的是"旧时序还撞不撞"。
-        hits = sj.find_conflicts({"hour": 15, "minute": 50}, mode="review")
+        # ⚠️ 时刻跟着 JOBS 走：复盘 15:45 → 15:50（2026-10-18）→ **16:38**（2026-11-01，
+        #    让到盘后全流程 P90 之后）。写死旧时刻等于测"旧时序还撞不撞"。
+        hits = sj.find_conflicts({"hour": 16, "minute": 38}, mode="review")
         assert "daily_review" in [h["job_id"] for h in hits]
         assert next(h for h in hits if h["job_id"] == "daily_review")["same_mode"] is True
 
     def test_different_time_is_clean(self):
-        # ⚠️ 用 17:30 而不是 16:00：16:00 已落在 15:58 的 ai_daily_round（6 分钟窗口）
-        #    影响范围内，检测会（正确地）报冲突。新增 JOBS 任务时必须回来复核这类
-        #    "看起来无关"的时间断言——这正是"新加任务要全仓搜断言"的原因。
-        assert sj.find_conflicts({"hour": 17, "minute": 30}, mode="review") == []
+        # ⚠️ 时刻必须挑**真空档**，每次加任务都要回来复核：
+        #    16:00（撞 15:58 ai_daily_round）→ 17:30（2026-11-01 重排后唯一空窗）
+        #    → **03:30**（2026-11-01 晚：新增 turn_share_sync 17:15 + 25 分钟收尾到
+        #    17:40，把 17:30 也占了）。盘后现在从 15:20 一路排到 17:40，
+        #    再加任务时**别再用盘后时刻**，凌晨是唯一长期稳定的空档。
+        assert sj.find_conflicts({"hour": 3, "minute": 30}, mode="review") == []
 
     def test_new_ai_round_is_covered_by_conflict_detection(self):
         """新任务也要被冲突检测覆盖（否则"加了任务但撞车没人提醒"）。"""
-        hits = sj.find_conflicts({"hour": 15, "minute": 59}, mode="review")
+        hits = sj.find_conflicts({"hour": 16, "minute": 47}, mode="review")
         assert "ai_daily_round" in [h["job_id"] for h in hits]
 
     def test_snapshot_overlapping_review_flagged_even_different_mode(self):
-        """不同 mode 但时间撞车也要报：快照跑 9 分钟把 15:45 的复盘挤到重复采集"""
-        hits = sj.find_conflicts({"hour": 15, "minute": 43}, mode="snapshot")
+        """不同 mode 但时间撞车也要报。
+
+        历史：快照跑 9 分钟把 15:45 的复盘挤成"重复采集"。
+        2026-11-01：短任务已全部让开，剩下的跨 mode 重叠就是
+        `snapshot_flow`(15:40, snapshot) × `afternoon_full`(15:30, rule) ——
+        一个 10 分钟的排期，10 分钟窗口必然压在 58 分钟的盘后全流程上。
+        """
+        hits = sj.find_conflicts({"hour": 15, "minute": 45}, mode="snapshot")
         ids = [h["job_id"] for h in hits]
-        assert "daily_review" in ids
-        assert next(h for h in hits if h["job_id"] == "daily_review")["same_mode"] is False
+        assert "afternoon_full" in ids
+        assert next(h for h in hits if h["job_id"] == "afternoon_full")["same_mode"] is False
 
     def test_high_frequency_jobs_are_exempt(self):
         """盯盘每分钟醒一次、新闻每小时 :05——跟它们比时间只会淹没真正的提示"""
@@ -249,16 +268,21 @@ class TestConflictDetection:
                                   "day_of_week": "sat"}, mode="review") == []
 
     def test_conflicts_between_custom_jobs(self):
+        # ⚠️ 时刻用 **03:30**：2026-11-01 晚新增 `turn_share_sync`(17:15 + 25 分钟)
+        #    之后，17:30 不再是空窗（盘后 15:20~17:40 已排满）。
+        #    历史上这里换过 16:00 → 16:05 → 17:30：每次都是因为前一段被新任务填满，
+        #    "看起来无关的时刻"其实是排期改动的高频受害者。
         others = [{"job_id": "custom_a", "name": "A", "mode": "snapshot",
-                   "cron": {"hour": 16, "minute": 10, "day_of_week": "mon-fri"}}]
-        hits = sj.find_conflicts({"hour": 16, "minute": 10}, mode="snapshot",
+                   "cron": {"hour": 3, "minute": 30, "day_of_week": "mon-fri"}}]
+        hits = sj.find_conflicts({"hour": 3, "minute": 30}, mode="snapshot",
                                  custom_jobs=others)
         assert [h["job_id"] for h in hits] == ["custom_a"]
 
     def test_self_is_excluded(self):
+        # 时刻同 test_conflicts_between_custom_jobs：03:30 是当前的内置空档
         others = [{"job_id": "custom_a", "name": "A", "mode": "news",
-                   "cron": {"hour": 16, "minute": 10, "day_of_week": "mon-fri"}}]
-        assert sj.find_conflicts({"hour": 16, "minute": 10}, mode="news",
+                   "cron": {"hour": 3, "minute": 30, "day_of_week": "mon-fri"}}]
+        assert sj.find_conflicts({"hour": 3, "minute": 30}, mode="news",
                                  custom_jobs=others, exclude_id="custom_a") == []
 
     def test_unparseable_builtin_cron_is_skipped_not_guessed(self):

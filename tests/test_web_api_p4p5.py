@@ -51,7 +51,14 @@ import data.watchlist           # noqa: F401,E402
 
 # 与 `core.scheduler.JOBS` 对齐的期望条数（新增定时任务时**必须**同步改这里，
 # 否则系统页会悄悄少一行而没人发现）
-EXPECTED_JOBS = 18
+# 2026-10-30：18 → 19（新增 fin_disclosure 财报公告日刷新 08:30）
+# 2026-10-31：+1（alpha_decay 超额衰减监控 16:45）
+# 2026-11-01 上午：+2（leftside_intraday 盘中预扫 14:45 / leftside_close 收盘扫描）
+# 2026-11-01 下午排期重排：-2（noon_screen 并入 morning_screen；ai_settle_close 并入
+#   ai_mark_nav 的 ai_close mode）⇒ 23 - 2 = 21
+# 2026-11-01 晚：+1（turn_share_sync 换手率/流通股本日更 17:15，从 market_snapshot
+#   派生，不打接口）⇒ 22
+EXPECTED_JOBS = 22
 
 
 # ================================================================
@@ -795,10 +802,22 @@ class TestDocEndpointCount:
 
         # 表格行：| `GET /api/xxx` ✅ | ...   —— 一行一个 path，去重
         import re
-        rows = set(re.findall(r"^\| `(?:GET|POST|DELETE|PUT|PATCH|WS) (/api/[^`]+)`",
-                              doc, re.M))
-        # URL 里的 `?` 是"怎么调"，不是路径的一部分
-        rows = {r.split("?")[0] for r in rows}
+        raw_rows = re.findall(
+            r"^\| `(GET|POST|DELETE|PUT|PATCH|WS) (/api/[^`]+)`", doc, re.M)
+        # 2026-11-01：重复行必须单独抓 —— 下面的 set 去重会让同一端点写两遍逃过
+        # 计数断言，而那正是读文档的人最容易被误导的形态（实测：/api/factors
+        # 的 GET+POST 整行各被复制了一份）。
+        # 必须按 (method, path) 判重：同一路径挂 GET+POST 是合法形态，
+        # 按 path 判重会把 10 个双方法路径全部误报（实测 62 行 vs 52 路径）。
+        # 只在**端点表**内判重：端点表的格式是 `| `GET /api/x` ✅ |`（带 ✅）；
+        # §5「页面契约」里的 `| `GET /api/x` | 说明 |` 是叙述性引用——同一路径
+        # 被多个页面列出是正常的，按全文档判重会把它们全部误报（实测 3 条）。
+        table_rows = re.findall(
+            r"^\| `(GET|POST|DELETE|PUT|PATCH|WS) (/api/[^`]+)` ✅", doc, re.M)
+        dup = sorted({p for p in table_rows if table_rows.count(p) > 1})
+        assert not dup, f"文档端点表有重复行（{len(table_rows)} 行）：{dup[:5]}"
+        # URL 里的 `?` 是调用参数，不是路径的一部分
+        rows = {p.split("?")[0] for _m, p in raw_rows}
         assert len(rows) == n_paths, (
             f"文档端点表 {len(rows)} 行 ≠ 实际 {n_paths} 个路径")
 

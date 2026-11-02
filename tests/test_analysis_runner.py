@@ -142,8 +142,14 @@ class TestSingleImplementationGuard:
 
     def test_ui_page_delegates_instead_of_reimplementing(self):
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        src = open(os.path.join(root, "ui", "pages", "2_🔍_深度分析.py"),
-                   encoding="utf-8").read()
+        page = os.path.join(root, "ui", "pages", "2_🔍_深度分析.py")
+        if not os.path.exists(page):
+            # 2026-11-01：Streamlit 界面已归档（archive/legacy_streamlit_20261101/ui）。
+            # 这条守的是"页面别自己实现 stream 循环"；页面没了就没有意义。
+            # 单一实现的正面守护在 `test_scheduler_wires_the_runner` 与
+            # `analysis_runner` 自身的用例里，仍在跑。
+            pytest.skip("Streamlit 界面已归档，页面级守护停用")
+        src = open(page, encoding="utf-8").read()
         assert "analysis_runner.run_analysis" in src, "页面必须委托执行器"
         assert ".stream(" not in src, (
             "页面里又出现了 stream 循环 ⇒ 与 core.analysis_runner 分叉了（单一实现被破坏）")

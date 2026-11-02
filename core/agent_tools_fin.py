@@ -14,6 +14,26 @@ from core.agent_tools_base import _tool, _now   # noqa: F401
 
 _logger = logging.getLogger(__name__)
 
+from data import fin_disclosure as _fd          # noqa: E402 - 公告日（PIT）数据层
+
+# PIT 口径说明（返回值里反复用，写一次避免多份文案漂移）
+_PIT_NOTE = ("只返回**公告日 ≤ as_of** 的财报。公告日取东财业绩报表的"
+             "'最新公告日期'，是该期的**最后一次**公告日（含更正公告）⇒ 是保守下界，"
+             "只会'晚用'不会'早用'；库里查不到公告日的期按'未公布'剔除（fail-closed），"
+             "而不是当成已公布。")
+
+
+def _fin_ann_map(symbol: str) -> dict:
+    """取该股各报告期的公告日 {YYYYMMDD: YYYY-MM-DD}；失败返回 {}（不阻断主流程）。"""
+    try:
+        return _fd.ann_map_for(symbol)
+    except Exception as e:                              # noqa: BLE001
+        # 拿不到公告日不该让财报工具整体失败；但必须留日志，
+        # 否则"前视防护静默失效"是没人能发现的
+        _logger.warning("[财报] 读取公告日失败（%s），本次按无公告日处理: %s",
+                        symbol, e)
+        return {}
+
 # ================================================================
 # 财务报表工具用到的静态表
 # ================================================================
@@ -204,12 +224,17 @@ def _single_quarter(rows: list, candidates: tuple, n: int):
 
 
 @_tool
-def tool_financials(symbol: str, periods: int = 4) -> dict:
+def tool_financials(symbol: str, periods: int = 4, as_of: str = "") -> dict:
     """个股财务报表：利润表/资产负债表/现金流量表的关键科目（单位亿元）+ 同比增速 + 自算比率。
 
     periods 为返回期数（1~8，默认 4）。**字段顺序即重要性顺序**：工具结果传给模型前
     有长度上限，超出会从尾部截断，所以把最该看的放前面。
     比率由三表自算（同日可比）；不良率/净息差等银行专项指标**不在三表内**，见 `三表外的关键指标`。
+
+    `as_of`（YYYY-MM-DD，可选）——**PIT 前视防护**：站在那一天看，只返回**公告日 ≤ as_of**
+    的财报。看"现在"时不要传（默认空=不过滤）；复盘/历史重放/任何"站在过去某天"的场景
+    **必须传**，否则会把当时还没公布的财报当成已知（这类错误不报错，只让结论偏乐观）。
+    公告日见返回的 `公告日` / `前视防护`。
     """
     from data.stock_data import StockDataFetcher
     symbol = str(symbol).strip()
@@ -225,10 +250,37 @@ def tool_financials(symbol: str, periods: int = 4) -> dict:
     if not rows_by["income_statement"] and not rows_by["balance_sheet"]:
         return {"error": "未取到财务报表（新浪/同花顺均不可用）"}
 
+    fmt = lambda pk: f"{pk[:4]}-{pk[4:6]}-{pk[6:]}"       # noqa: E731
+    base_raw = max((rows_by[k] for k in keys), key=len)
+    periods_raw = [pk for pk, _ in base_raw]
+
+    # ── PIT 前视防护（2026-10-30）───────────────────────────────────
+    # 不传 as_of 时**完全不过滤**（行为与加入本参数前一致，避免"没公告日数据
+    # 就少返几期"把现有分析悄悄改坏）；传了才按公告日裁。
+    as_of_s = str(as_of or "").strip()
+    ann_all = _fin_ann_map(symbol)
+    pit = None
+    if as_of_s:
+        kept, dropped = _fd.split_by_as_of(periods_raw, ann_all, as_of_s)
+        if not kept:
+            return {"代码": symbol,
+                    "error": (f"截至 {as_of_s} 没有任何已公布的财报"
+                              f"（{len(periods_raw)} 期全部被前视防护剔除）"),
+                    "前视防护": {"as_of": as_of_s, "已剔除": dropped[:8],
+                                 "说明": _PIT_NOTE}}
+        keep = set(kept)
+        rows_by = {k: [(pk, r) for pk, r in rows_by[k] if pk in keep]
+                   for k in keys}
+        pit = {"as_of": as_of_s, "可用期数": len(kept), "总期数": len(periods_raw),
+               "已剔除": dropped, "说明": _PIT_NOTE}
+
     # 以"有数据的那张表"的期为基准，避免只取到部分报表时报告期错位
     base = max((rows_by[k] for k in keys), key=len)
     periods_all = [pk for pk, _ in base]
-    fmt = lambda pk: f"{pk[:4]}-{pk[4:6]}-{pk[6:]}"       # noqa: E731
+    if not periods_all:
+        return {"代码": symbol, "error": "过滤后没有可用报告期（数据源或前视防护把所有期都去掉了）",
+                "前视防护": pit}
+    n = min(n, len(periods_all))
 
     # ⚠️ 不能用 `fin.get("balance_sheet", [{}])[0]`：`.get` 的默认值只在**键不存在**时生效，
     # 而 `_get_chinese_financial_data` 取不到时会显式存 None（键存在、值为 None），
@@ -245,6 +297,19 @@ def tool_financials(symbol: str, periods: int = 4) -> dict:
            "口径": ("累计（年初至今）：同一自然年内相邻报告期相减才是单季；"
                     "跨报告期不可算环比，同比须与去年同报告期比"),
            "数据来源": source or "新浪财报三表（stock_financial_report_sina）"}
+
+    # ── 公告日（PIT）：与 `报告期` **逐位对齐**，模型才能把"哪一期什么时候公布"对上 ──
+    # 只在至少有一期知道时才给，否则一个全空列表只会占长度还没信息。
+    anns = [ann_all.get(pk, "") for pk in periods_all[:n]]
+    if any(anns):
+        out["公告日"] = anns
+        miss = sum(1 for a in anns if not a)
+        if miss:
+            out["公告日缺失期数"] = miss
+            out["公告日说明"] = ("空串=该期公告日未回填（**不等于**还没公布）；"
+                                 "回填入口：py scripts/backfill_disclosure_dates.py")
+    if pit:
+        out["前视防护"] = pit
 
     # ── 三表关键科目 ───────────────────────────────────────────────
     missing_labels: list = []
@@ -382,3 +447,59 @@ def tool_financials(symbol: str, periods: int = 4) -> dict:
     return out
 
 
+@_tool
+def tool_fin_disclosures(code: str = "", period: str = "", as_of: str = "") -> dict:
+    """查财报**公告日**（PIT）：每期财报哪天公布的 / 财报季披露进度。
+
+    为什么单独做一个工具：`tool_financials` 只给"这份财报的数字"，回答不了
+    "这份财报什么时候出的""站在 9 月 1 日我能不能看到中报"。而这两类问题正是
+    前视偏差的入口——看不见"什么时候公布"，就只能靠猜。
+
+    code 为空 ⇒ 返回全市场覆盖概况（抓过几个报告期、每期多少只、公告日区间）。
+    """
+    from db import store
+    code_s = str(code or "").strip()
+    period_s = _fd._norm_period(period) if str(period or "").strip() else ""
+    as_of_s = str(as_of or "").strip()
+
+    if code_s:
+        if not (code_s.isdigit() and len(code_s) == 6):
+            return {"error": "股票代码须为6位数字"}
+        try:
+            rows = store.list_fin_disclosures(stock_code=code_s, period=period_s,
+                                              as_of=as_of_s, limit=40)
+        except Exception as e:                          # noqa: BLE001
+            _logger.warning("[财报公告日] 查询失败 %s: %s", code_s, e)
+            return {"error": f"公告日查询失败: {e}"}
+        if not rows:
+            cov = store.fin_disclosure_coverage()
+            return {"代码": code_s,
+                    "error": "该股没有公告日记录"
+                             f"{'（报告期 ' + period_s + '）' if period_s else ''}"
+                             f"{'，且限定 as_of=' + as_of_s if as_of_s else ''}",
+                    "提示": ("已回填的报告期："
+                             + (", ".join(r["period"] for r in cov["periods"][:6])
+                                or "无（先跑 scripts/backfill_disclosure_dates.py）"))}
+        out = {"代码": code_s, "记录数": len(rows),
+               "公告日": [{"报告期": _fmt_pk(r["period"]),
+                         "公告日": r["ann_date"]} for r in rows],
+               "口径": _PIT_NOTE}
+        if as_of_s:
+            out["as_of"] = as_of_s
+            out["说明"] = "只列公告日 ≤ as_of 的记录；查不到不等于没公布"
+        return out
+
+    cov = store.fin_disclosure_coverage()
+    if not cov["rows"]:
+        return {"error": "公告日表为空（先跑 py scripts/backfill_disclosure_dates.py）"}
+    return {"已回填报告期": cov["period_count"], "总行数": cov["rows"],
+            "详情": [{"报告期": _fmt_pk(r["period"]), "股票数": r["n"],
+                      "公告日最早": r["a"], "公告日最晚": r["b"],
+                      "抓取时间": r["f"]} for r in cov["periods"][:12]],
+            "口径": _PIT_NOTE,
+            "提示": "单只票用 code 参数；as_of 可问'站在某天能看到哪些期'"}
+
+
+def _fmt_pk(pk: str) -> str:
+    s = str(pk or "")
+    return f"{s[:4]}-{s[4:6]}-{s[6:]}" if len(s) == 8 else s

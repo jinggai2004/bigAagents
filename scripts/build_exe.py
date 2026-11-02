@@ -74,6 +74,11 @@ HIDDEN = [
     # 但显式列出来更稳：漏了它 ⇒ `exe --scheduler` 直接 ModuleNotFoundError，
     # 而表现为"双击面板后调度器永远没起来"（无窗口、无控制台、极难发现）。
     "scripts.run_scheduler",
+    # 换手率/流通股本日更的数据层（2026-11-01）。由
+    # `core/scheduler.py::run_turn_share_job` 在**函数内**导入，静态分析能扫到；
+    # 显式列出是同一个理由：漏了它 ⇒ 17:15 的任务每次 ModuleNotFoundError，
+    # 被 `except Exception` 吞成一条 WARNING，因子尾部继续 NaN 而看不出原因。
+    "data.turn_share",
 ]
 
 COLLECT_SUBMODULES = ["uvicorn", "websockets", "anyio", "web.server.routers"]
@@ -100,6 +105,9 @@ COLLECT_DATA = ["akshare"]
 PACKAGE_DATA_VERBATIM = ["py_mini_racer"]
 
 # 明显用不到、但会被间接拉进来的重包（构建体积/时间）
+# ⚠️ 2026-11-01：这里刻意**不**加 `streamlit` —— 它已从 requirements.txt 删除，
+#    打包机不再安装它，PyInstaller 自然不会收；写进 excludes 只是多一处可能
+#    写错的地方（写错 = 运行时 import 失败 = 启动即崩，要重打包 10 分钟才发现）。
 EXCLUDE = ["matplotlib", "tkinter", "PyQt5", "PySide6", "notebook", "IPython"]
 
 

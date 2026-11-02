@@ -27,6 +27,9 @@ _SKIP_DIRS = {"__pycache__", ".git", "temp", "tests", "output", "logs"}
 
 # 长驻进程的识别特征（cmdline 里出现即视为本项目进程）
 WATCHERS = (
+    # ⚠️ 2026-11-01：Streamlit 界面已归档（archive/legacy_streamlit_20261101/ui）。
+    #    这条**故意保留**：现在还能匹配到，只可能是有人手动起了归档版，
+    #    那正是"跑的不是当前界面"的强信号，值得报出来而不是静默忽略。
     ("UI (streamlit)", ("streamlit", "ui/app.py")),
     ("调度器", ("run_scheduler.py",)),
     # ⚠️ 打包后调度器是 `bigAagents.exe --scheduler`（2026-10-27 实测漏检）：
@@ -35,7 +38,7 @@ WATCHERS = (
     #    这正是「未知 ≠ 正常」的反例：exe 跑着旧代码时，这一项本来就是唯一
     #    能发现它的地方，漏检等于把自检变成安慰剂。
     # ⚠️ 必须写成 `bigaagents.exe`，**不能**只写 `bigaagents`：本项目路径里处处
-    #    是 `bigAagents`（如 `python -m http.server --directory <项目根目录>/
+    #    是 `bigAagents`（如 `python -m http.server --directory <项目根>/
     #    companion`），只写目录名会把这类无关进程认成面板 —— 2026-10-27 用真 exe
     #    验证时，一个 http.server 被报成"面板跑的是旧代码"。
     ("调度器", ("bigaagents.exe", "--scheduler")),
@@ -226,5 +229,6 @@ def describe(result: dict) -> list[str]:
         lines.append(line)
     if any(p["stale"] for p in procs):
         lines.append("⇒ 改动不会生效：请重启对应进程"
-                     "（调度器双击 `重启调度器.bat`；UI 重跑 `streamlit run ui/app.py`）。")
+                     "（调度器双击 `重启调度器.bat`；界面重开 "
+                     "`dist/bigAagents/bigAagents.exe`）。")
     return lines

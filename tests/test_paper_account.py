@@ -255,6 +255,11 @@ class TestFillContract:
         import pathlib
         page = (pathlib.Path(__file__).resolve().parents[1]
                 / "ui" / "pages" / "8_💰_模拟账户.py")
+        if not page.exists():
+            # 2026-11-01：Streamlit 界面已归档（archive/legacy_streamlit_20261101/ui）。
+            # 契约本身仍由上面两条守着（buy_fill/sell_fill 的键集合 + 无裸 price 键），
+            # 这里是"页面别改回旧写法"的补充扫描，页面归档后自然停用。
+            pytest.skip("Streamlit 界面已归档，页面级守护停用")
         src = page.read_text(encoding="utf-8")
         assert "['price']" not in src.replace('fresh["price"]', "").replace("quote['price']", ""), (
             "模拟账户页出现对撮合明细 `['price']` 的取键——"

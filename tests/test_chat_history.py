@@ -157,7 +157,11 @@ class TestChatHistoryModule:
                      tools_used=["get_fund_flow"], persona="综合", model="qwen-turbo")
         msgs = db_store.get_chat_messages("s1")
         assert [m["role"] for m in msgs] == ["user", "assistant"]
-        assert msgs[0]["prompt_tokens"] == 8       # token 记在提问行
+        # ⚠️ 2026-10-30 起 token 改记在**回答行**：save_turn 拆成
+        #    start_turn（先落提问）+ complete_turn（轮末才知道用量），
+        #    提问落库时还没有用量可记。会话级汇总不受影响。
+        assert msgs[0]["prompt_tokens"] is None
+        assert msgs[1]["prompt_tokens"] == 8 and msgs[1]["completion_tokens"] == 4
         assert msgs[1]["tools_used"] == ["get_fund_flow"]
         sess = db_store.get_chat_session("s1")
         assert sess["title"] == "帮我看看茅台"

@@ -25,6 +25,18 @@ def api_system_tasks() -> dict:
     return system.tasks()
 
 
+@router.post("/api/system/tasks")
+def api_system_tasks_set(payload: dict) -> dict:
+    """定时任务的增删改（内置任务的备注/模型/启停 + 自定义任务全字段）。
+
+    body: `action` + 各自字段，见 `system.set_jobs`。
+    与 `/api/system/models` 同一条纪律：**人**在页面上点，不套两阶段确认。
+    改完由调度进程 60s 热同步落地，不用重启。
+    """
+    p = payload or {}
+    return system.set_jobs(p.get("action", ""), p)
+
+
 @router.get("/api/system/cost")
 def api_system_cost(days: int = 7) -> dict:
     return system.cost(days=max(1, min(30, days)))

@@ -142,6 +142,11 @@ def turn_events(session_id: str, message: str, persona: str | None = None,
     # ⚠️ 历史必须在**写入本轮之前**读：先 save_turn 再 load_messages 会让
     #    当前提问出现两次（一次在 history 末尾、一次作为 user_msg）。
     history = chat_history.load_messages(sid, limit=HISTORY_LIMIT)
+    # ⚠️ 提问**立刻**落库（2026-10-30）：旧版"整轮跑完才 save_turn"，页面断开/
+    #    进程崩溃时连提问都不在库里——用户看不到回答，排查也没有线索。
+    #    必须在 load_messages **之后**插入，否则本轮提问会出现在 history 里。
+    chat_history.start_turn(sid, message, persona=persona, model=model,
+                            source="web")
     yield {"type": "session", "session_id": sid}
 
     agent = ChatAgent(model=model, persona=persona or "综合")
@@ -169,14 +174,19 @@ def turn_events(session_id: str, message: str, persona: str | None = None,
         yield {"type": "error", "error": {"type": "upstream", "message": errored}}
 
     if answer:
-        chat_history.save_turn(sid, message, answer, usage=agent.usage_total,
-                               tools_used=agent.tools_used, persona=persona,
-                               model=agent.model, source="web")
+        # 轮末补回答（提问已在 start_turn 落库）
+        chat_history.complete_turn(sid, answer, usage=agent.usage_total,
+                                   tools_used=agent.tools_used)
     elif errored:
-        # 失败也留痕：只写提问、回答写失败原因 —— 比"这条对话消失了"可排查
-        chat_history.save_turn(sid, message, f"（本轮失败：{errored}）",
-                               usage=agent.usage_total, persona=persona,
-                               model=agent.model, source="web")
+        # 失败也留痕：回答写失败原因 —— 比"这条对话消失了"可排查
+        chat_history.complete_turn(sid, f"（本轮失败：{errored}）",
+                                   usage=agent.usage_total,
+                                   tools_used=agent.tools_used)
+    else:
+        # 没有 answer 也没有 error（agent 静默返回）：如实留痕，不留"看不见的黑洞"
+        chat_history.complete_turn(sid, "（本轮未产生回答）",
+                                   usage=agent.usage_total,
+                                   tools_used=agent.tools_used)
 
     yield {"type": "done", "session_id": sid, "usage": dict(agent.usage_total),
            "tools": list(agent.tools_used)}

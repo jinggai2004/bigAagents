@@ -90,6 +90,15 @@ _MAX_PAGES = 12          # 安全上限：防止接口行为变化导致翻页�
 # 复权类型 → 响应里对应的数据键。**不可互相回退**（见模块 docstring）
 _ADJUST_KEY = {"qfq": "qfqday", "hfq": "hfqday", "": "day"}
 
+# ── 连接层熔断（2026-10-30）──────────────────────────────────────
+# 事故：WinINET 代理指向未启动的 Clash，K 线路径对死代理 3 次重试 × 每次超时，
+#       单只票白烧 70 秒；同一时刻资金流路径 0.5 秒就熔断降级成功。
+# 判据与 data/fund_flow / data/eastmoney_source 同口径（见 utils/conn_guard）。
+# 冷却 600s 与东财快照一致；面板优先落地后 K 线很少需要走网络，代价可忽略。
+from utils.conn_guard import ConnBreaker, is_connection_level_error  # noqa: E402
+
+_BREAKER = ConnBreaker("腾讯日线", cooldown=600.0)
+
 
 def to_tx_code(symbol: str) -> str:
     """6 位代码 → 腾讯格式（sh/sz/bj 前缀）。已是前缀格式则原样返回。
@@ -169,6 +178,11 @@ def _request_page(code: str, end_date: str, adjust: str, timeout: float,
             raise ValueError(f"响应结构异常，data[{code}] 无 K 线字段")
         except Exception as e:                       # noqa: BLE001
             last_exc = e
+            # 连接层失败 ⇒ 重试同一主机没有意义：立即熔断并直接抛出，
+            # 把机会让给调用方的下一个数据源（2026-10-30 事故的正解）。
+            if is_connection_level_error(e):
+                _BREAKER.trip(f"{code}: {e}")
+                raise
             if attempt < retries - 1:
                 delay = 0.5 * (attempt + 1)
                 _logger.warning("[腾讯直连] %s 第 %d/%d 次失败(%s)，%.1fs 后重试",
@@ -191,6 +205,13 @@ def fetch_kline(symbol: str, start_date, end_date=None, adjust: str = "qfq",
     end = _norm_date(end_date)
     if pd.Timestamp(start) > pd.Timestamp(end):
         start, end = end, start
+
+    # 熔断冷却期内直接快速失败：让 source_manager 立刻换下一个源，
+    # 而不是又对着同一台不通的主机等 3 次超时（2026-10-30 事故）。
+    if _BREAKER.open():
+        raise ConnectionError(
+            f"[腾讯日线] 熔断中（剩余 {_BREAKER.remaining():.0f}s），"
+            f"跳过本次网络请求；上一次为连接层故障")
 
     collected: dict = {}
     errors: list = []

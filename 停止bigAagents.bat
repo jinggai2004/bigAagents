@@ -17,7 +17,9 @@ taskkill /FI "WINDOWTITLE eq bigAagents-守护*" /T /F >nul 2>&1
 
 rem 2) 兜底：按命令行清理残留进程（不影响其他 Python 程序）
 powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*run_scheduler.py*' -and $_.Name -like '*python*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
-powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*streamlit run ui*' -and $_.Name -like '*python*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
+rem 2026-11-01：Streamlit 已归档，改为清理 exe 主体（不带 --scheduler 的那个进程
+rem            上面的 --scheduler 判据抓不到它，实测点"停止"后窗口仍在）。
+powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'bigaagents*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
 powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*watchdog.py*' -and $_.Name -like '*python*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
 rem    —— 面板自调用起的调度器（2026-10-26）：它是 `bigaagents.exe --scheduler`，
 rem       命令行里没有 run_scheduler.py，上面按 python.exe 的判据抓不到它。

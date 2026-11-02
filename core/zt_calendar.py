@@ -47,6 +47,20 @@ PANEL_PARTS_DIR = os.path.join(PROJECT_ROOT, "data", "panel", "parts")
 PANEL_OVERLAY_DIR = os.path.join(PROJECT_ROOT, "data", "panel", "daily_overlay")
 _CACHE_PATH = os.path.join(PROJECT_ROOT, "data", "panel", "cache_recent_panel.parquet")
 
+
+def _cache_path(days: int) -> str:
+    """落盘缓存的**按 days 分文件**路径（2026-11-01 修）。
+
+    ⚠️ 原实现是单文件缓存且不记录 days：先调 `_load_recent(40)` 再调
+    `_load_recent(400)`，第二次会命中 40 天的缓存 —— 调用方只能靠"记得传
+    use_cache=False"避险（脚本层已多次踩到）。缓存键必须带作用域。
+
+    ⚠️ 基名仍取 `_CACHE_PATH`：测试/脚本会 patch 它把缓存导到临时目录
+    （tests/test_b2_localization.py），派生路径必须从它算。
+    """
+    base, ext = os.path.splitext(_CACHE_PATH)
+    return f"{base}_{int(days)}d{ext}"
+
 _COLS = ["stock_code", "trade_date", "close", "preclose", "is_st", "trade_status"]
 
 # 涨跌停幅度的两个**改制分界日**（均由本地面板反推，不是查来的规定：
@@ -125,6 +139,17 @@ def _limit_ratio(code: str, is_st, trade_date=None) -> float:
     return 0.10
 
 
+def limit_ratio(code: str, is_st=None, trade_date=None) -> float:
+    """**公开入口**：该股当日涨跌停幅度（0.10 = 10%）。
+
+    逻辑全部在 `_limit_ratio`（按板块 + 制度分界日，ST 只影响主板），
+    这里只是给 `core/portfolio_construct.py` 等外部调用方一个非私有名字。
+    ⚠️ 任何新模块判涨跌停都必须走这里，**不准自己写 1.1/0.9** ——
+    双创 20%、北交所 30%、主板 ST 2026-07-06 起 10%，写死 10% 会错。
+    """
+    return _limit_ratio(code, is_st, trade_date)
+
+
 def _load_recent(days: int = 40, *, use_cache: bool = True) -> pd.DataFrame | None:
     """最近 `days` 个**自然日**的面板切片（列子集）。默认 40 自然日 ≈ 27 个
     交易日 —— 市场宽度需要每股 ≥21 根（MA20），25 自然日只有 ~17 根不够
@@ -135,6 +160,7 @@ def _load_recent(days: int = 40, *, use_cache: bool = True) -> pd.DataFrame | No
     （⚠️ 不用 pyarrow `filters`：trade_date 是 category 列，类型不匹配会把
     几乎全部行滤掉——2026-10-19 实测只剩 23 行）。落盘缓存按**数据新鲜度**
     键控：缓存里最新交易日距今 ≤3 天就复用，否则重建（周末不反复重建）。
+    缓存文件另按 `days` 分文件（见 `_cache_path`）——否则不同窗口长度会互相串。
     """
     import glob
 
@@ -142,9 +168,10 @@ def _load_recent(days: int = 40, *, use_cache: bool = True) -> pd.DataFrame | No
         fs = sorted(glob.glob(os.path.join(PANEL_OVERLAY_DIR, "*.parquet")))
         return os.path.basename(fs[-1])[:10] if fs else None
 
-    if use_cache and os.path.exists(_CACHE_PATH):
+    path = _cache_path(days)
+    if use_cache and os.path.exists(path):
         try:
-            cached = pd.read_parquet(_CACHE_PATH)
+            cached = pd.read_parquet(path)
             if len(cached):
                 newest = pd.to_datetime(cached["trade_date"].astype(str).str[:10]).max()
                 ov = _latest_overlay_date()
@@ -208,9 +235,9 @@ def _load_recent(days: int = 40, *, use_cache: bool = True) -> pd.DataFrame | No
     df = df[df["trade_date"] >= start].reset_index(drop=True)
     if use_cache and len(df):
         try:
-            tmp = _CACHE_PATH + ".tmp"
+            tmp = path + ".tmp"
             df.to_parquet(tmp, index=False)
-            os.replace(tmp, _CACHE_PATH)
+            os.replace(tmp, path)
         except Exception as e:                              # noqa: BLE001
             _logger.warning("[zt_calendar] 缓存写入失败（不影响本次）: %s", e)
     return df
@@ -219,11 +246,15 @@ def _load_recent(days: int = 40, *, use_cache: bool = True) -> pd.DataFrame | No
 def clear_cache() -> None:
     """清进程内缓存 + 删除落盘缓存（回填完成后调用）。"""
     limit_up_stats.cache_clear()
-    try:
-        if os.path.exists(_CACHE_PATH):
-            os.remove(_CACHE_PATH)
-    except OSError as e:
-        _logger.warning("[zt_calendar] 缓存删除失败: %s", e)
+    # 2026-11-01 起按 days 分文件：删全部派生缓存 + 旧单文件（升级前遗留）
+    import glob as _g
+    base, ext = os.path.splitext(_CACHE_PATH)
+    for p in [_CACHE_PATH] + sorted(_g.glob(f"{base}_*d{ext}")):
+        try:
+            if os.path.exists(p):
+                os.remove(p)
+        except OSError as e:
+            _logger.warning("[zt_calendar] 缓存删除失败（%s）: %s", p, e)
 
 
 @lru_cache(maxsize=2)

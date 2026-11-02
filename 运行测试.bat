@@ -17,7 +17,7 @@ if defined PY if not exist "%PY%" (
     echo [WARN] BIGA_PYTHON path not found, ignored: %PY%
     set "PY="
 )
-if not defined PY set "PY=C:\Users\OMEN\AppData\Local\Programs\Python\Python312\python.exe"
+if not defined PY set "PY=%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
 if not exist "%PY%" set "PY="
 rem Falling back to the py launcher MUST resolve to its real exe path:
 rem   PY="py -3" would expand into "py -3" and cmd would look for a FILE named
@@ -105,7 +105,8 @@ echo ============================================
 
 echo.
 
-"%PY%" -m pytest tests -q --basetemp="%BT%" -n 4 --ignore=tests/test_ui_pages_smoke.py %2 %3 %4
+rem 2026-11-01: test_ui_pages_smoke.py 已随 Streamlit 界面归档（archive/），不再需要 --ignore
+"%PY%" -m pytest tests -q --basetemp="%BT%" -n 4 %2 %3 %4
 
 set RC=%errorlevel%
 

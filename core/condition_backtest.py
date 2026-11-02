@@ -32,6 +32,7 @@
 import logging
 from dataclasses import dataclass, field
 
+import numpy as np
 import pandas as pd
 
 from core import nl_screener as nl
@@ -42,6 +43,9 @@ _logger = logging.getLogger(__name__)
 REPLAYABLE_FIELDS = frozenset({
     "ma_bullish", "ma20_above", "momentum20", "volatility",   # K 线
     "change_pct", "amount", "turnover",                        # 新浪日线自带
+    # ── 论文因子扫描晋身（2026-10-30）——全部由历史日线/换手可重算 ⇒ 可回放，
+    #    `_prepare` 里算（与 factor_analysis._enrich 同口径）。
+    "upshd20", "turn_std20", "amihud20", "lndvol20", "mom1m", "pv_corr20",
 })
 
 # 明确不可回放的指标 + 原因（写进报告，让读者知道条件集的完整构成）
@@ -132,8 +136,16 @@ class ConditionSignalGenerator:
             return
         from data import bars as _bars
         from data import sina_source
+        # ⚠️ 宇宙守卫（2026-10-31）：回测区间若跨到"上市不满一年"或"北交所开市前"，
+        #    那些行不可比（停牌跨段量出的收益是复牌跳空，实测能造出 +142%/月）。
+        #    这里**按行裁剪**而不是整票剔除：2020-06 上市的票，2019 段不可比、
+        #    2021 后可比，一刀切会误杀正常历史。
+        from core import universe_guard as _ug
+        guarded = _ug.guard_enabled()
         ok = 0
         missing: list[str] = []
+        trimmed_rows = 0
+        emptied: list[str] = []
         for code in self.codes:
             if code in self._no_data:
                 continue                              # 缺失标的**只尝试一次**
@@ -142,6 +154,14 @@ class ConditionSignalGenerator:
             if df is None:
                 missing.append(code)
                 continue
+            if guarded:
+                df, cut = _ug.trim_with_stats(df, code)
+                trimmed_rows += cut
+                if len(df) == 0:
+                    # 不是"没数据"，是"这段区间不可比"——不能进 _no_data，
+                    # 否则换区间重跑时会直接跳过它。
+                    emptied.append(code)
+                    continue
             self._data[code] = self._prepare(df)
             ok += 1
         if missing and not _bars.offline_mode():
@@ -150,12 +170,21 @@ class ConditionSignalGenerator:
                 if df is None or df.empty:
                     self._no_data.add(code)
                     continue
+                if guarded:
+                    df, cut = _ug.trim_with_stats(df, code)
+                    trimmed_rows += cut
+                    if len(df) == 0:
+                        emptied.append(code)
+                        continue
                 self._data[code] = self._prepare(df)
                 ok += 1
         elif missing:
             _logger.info("[条件回测] 离线模式：跳过 %d 只本地缺失代码", len(missing))
         if missing:
             _logger.info("[条件回测] 本地缺 %d 只", len(missing))
+        if guarded and (trimmed_rows or emptied):
+            _logger.info("[条件回测] 宇宙守卫：剪掉 %d 行历史（%d 只票整个区间不可比：%s）",
+                         trimmed_rows, len(emptied), ",".join(emptied[:5]))
         self._loaded_range = (start_date, end_date)
         _logger.info("[条件回测] 预加载 %d/%d 只（%s ~ %s）",
                      ok, len(self.codes), start_date, end_date)
@@ -170,6 +199,22 @@ class ConditionSignalGenerator:
         df["ma10"] = close.rolling(10).mean()
         df["ma5"] = close.rolling(5).mean()
         df["chg"] = close.pct_change() * 100.0
+        # ── 论文因子扫描晋身（2026-10-30，与 factor_analysis._enrich 同口径）──
+        # turn_share 回填后 turnover_pct 才有历史；缺列时 NaN 占位，
+        # 条件回测按"字段不可用"跳过，绝不拿当期值冒充历史值。
+        if "turnover_pct" in df.columns:
+            t = pd.to_numeric(df["turnover_pct"], errors="coerce").ffill(limit=3)
+            amt = (pd.to_numeric(df["amount"], errors="coerce")
+                   if "amount" in df.columns
+                   else pd.Series(np.nan, index=df.index))
+            r = close.pct_change()
+            df["upshd20"] = ((df["high"] - np.maximum(df["open"], close)) / close) \
+                .rolling(20).mean()
+            df["turn_std20"] = t.rolling(20).std()
+            df["amihud20"] = (r.abs() / amt.replace(0.0, np.nan)).rolling(20).mean() * 1e9
+            df["lndvol20"] = np.log(amt.rolling(20).mean().replace(0.0, np.nan))
+            df["mom1m"] = close / close.shift(21) - 1.0
+            df["pv_corr20"] = r.rolling(20).corr(t.diff())
         return df
 
     def _slice(self, code: str, date_str: str):

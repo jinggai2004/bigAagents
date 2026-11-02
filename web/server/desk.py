@@ -24,8 +24,13 @@ from web.server import cache, envelope, picks
 
 _logger = logging.getLogger(__name__)
 
-TTL_PRICES = 30
+TTL_PRICES = 300       # 收盘价当天不变（缓存键含面板日期，日更后键自动换新）；
+                       # 原 30s ⇒ 每 30s 重新逐只读盘（0.9~1.8s），白天调度器
+                       # 密集写库时这次同步读会被 SQLite 写锁卡住 —— 交易台
+                       # "读取好慢"的主因（2026-10-31 实测定位）。
 TTL_LEAGUE = 60
+SWR_STALE_PRICES = 900   # 缓存过期后先回旧值后台刷（收盘价陈旧 15 分钟无害）
+SWR_STALE_LEAGUE = 180
 
 # 模拟账户下单是「读整份 state → 改 → 写回」：两个请求并发会丢单。
 # `store.save_paper_state` 自身是单事务，但**读**在事务外，所以锁必须在这里。
@@ -67,7 +72,10 @@ def local_closes(codes) -> tuple[dict, str | None, list]:
         return prices, (max(dates) if dates else None), missing
 
     ident = (tuple(sorted(codes)), _panel_stamp())
-    return cache.cached("desk.prices", ident, TTL_PRICES, _load)
+    # SWR：调度器忙时（SQLite 写锁）这次读盘可能卡数秒 ⇒ 先回旧收盘价，
+    # 后台刷新。键里已带面板日期，"旧"最多旧一个面板日，口径仍是收盘价。
+    return cache.swr("desk.prices", ident, TTL_PRICES, _load,
+                     max_stale=SWR_STALE_PRICES)
 
 
 def _panel_stamp():
@@ -277,7 +285,8 @@ def league(now=None) -> dict:
     from core.ai_league import leaderboard
 
     try:
-        board = cache.cached("desk.league", _panel_stamp(), TTL_LEAGUE, leaderboard)
+        board = cache.swr("desk.league", _panel_stamp(), TTL_LEAGUE, leaderboard,
+                          max_stale=SWR_STALE_LEAGUE)
     except Exception as e:                                    # noqa: BLE001
         _logger.warning("[desk] 联赛榜单失败: %s", e)
         return envelope.fail("empty", f"{type(e).__name__}: {e}")
@@ -980,3 +989,51 @@ def _in_session(now: datetime) -> bool:
     except Exception as e:                                    # noqa: BLE001
         _logger.debug("[desk] 交易时段判断不可用: %s", e)
         return False
+
+
+# ── 阿深留言板（M4#1，2026-10-30）────────────────────────────────
+# 为什么不是直接改它的自选/账户：人对人的指令要走"它读过、它决定"这条路——
+# 留言进**下一值班轮的 prompt**，它必须逐条回应、要盯价位就自己 set_wake。
+# 这才是"可互动"：M3 的 ashen_chat 只能聊（只读、不留后果），留言才有后果。
+
+
+def leave_message(text: str) -> dict:
+    """老板给阿深留一句话（下一值班轮它必须读到并回应）。"""
+    from db import store
+
+    t = str(text or "").strip()
+    if not t:
+        return envelope.fail("invalid", "留言为空")
+    if len(t) > 500:
+        t = t[:500]
+    mid = store.add_ashen_message(t)
+    pending = store.pending_ashen_messages(limit=5)
+    # 下一个班次：给用户"它什么时候会读到"的明确预期（而不是"过会儿吧"）
+    try:
+        from core.ai_routine import due_slot
+        nxt = due_slot() or "明日 09:40"
+    except Exception as e:                                  # noqa: BLE001
+        _logger.warning("[阿深留言] 下班次计算失败: %s", e)
+        nxt = "明日 09:40"
+    return envelope.ok({
+        "id": mid,
+        "text": t,
+        "pending": len(pending),
+        "next_slot": nxt,
+        "note": f"已送达。它将在下一值班轮（{nxt}）读到并逐条回应；"
+                f"要它盯价位请写清标的与价格，它会自己挂条件",
+    }, as_of=datetime.now().strftime("%Y-%m-%d %H:%M"))
+
+
+def ashen_messages(limit: int = 20) -> dict:
+    """留言台账：哪些已回应、它当时说了什么（新→旧）。"""
+    from db import store
+
+    try:
+        rows = store.list_ashen_messages(limit=max(1, min(int(limit or 20), 100)))
+    except Exception as e:                                  # noqa: BLE001
+        _logger.warning("[阿深留言] 台账读取失败: %s", e)
+        return envelope.fail("error", f"{type(e).__name__}: {e}")
+    pending = sum(1 for r in rows if r.get("status") == "pending")
+    return envelope.ok({"pending": pending, "rows": rows},
+                       as_of=datetime.now().strftime("%Y-%m-%d %H:%M"))

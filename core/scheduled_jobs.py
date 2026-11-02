@@ -47,22 +47,61 @@ _logger = logging.getLogger(__name__)
 #                踩过的坑（snapshot_flow 15:40 排下去、慢时跑 9 分钟，
 #                把 15:45 的复盘挤到重复采集）。界面明确标注这是估算值。
 JOB_MODES: dict = {
+    "leftside_intraday": {
+        # 左侧监测盘中预扫（2026-11-01）：实时快照截面 + 资质卡 → 预清单落 watch_pool。
+        # 14:45 跑：收盘前出清单方便次日操作（用户要求）；实时跌幅已接近收盘价。
+        # 不调模型、不推送；实时源不可用时 get_market_snapshot 自动回退最近截面
+        # （degraded 如实带出），周末跑也不报错。
+        "label": "左侧监测盘中预扫",
+        "needs_trading_day": True, "llm": False, "minutes": 3,
+        "desc": "实时快照找『无明显利空的大跌 + 基本面达标』进关注池（预清单，"
+                "收盘版才是正式口径）",
+    },
+    "leftside_close": {
+        # 左侧监测收盘正式版：日频面板收盘价 + 对全池做右侧状态机
+        # （站回 MA20 记标记 / 60 自然日未修复 ⇒ expired 证伪嫌疑移出）。
+        "label": "左侧监测收盘扫描",
+        "needs_trading_day": True, "llm": False, "minutes": 5,
+        "desc": "收盘价口径重扫关注池，并更新右侧状态（MA20 修复标记 / 60 天未修复移出）",
+    },
+    "fin_disclosure": {
+        # 财报公告日刷新（PIT 前视防护，2026-10-30）。
+        # 不进交易日闸门：公告日不依赖当日行情，节假日也会披露。
+        # 不调模型：纯抓取。耗时上界给 2 分钟（巨潮约 3s/期 × 2 期，留足重试余量）。
+        # 为什么要有这个任务：`financial_disclosures` 为空时 PIT 防护会
+        # fail-closed（历史基本面分析全部"无可用财报"），而 exe 用户没有 CLI
+        # 可以跑回填脚本 ⇒ 必须由调度自维护。
+        # ⚠️ `desc` 不能少：系统配置页的自定义任务面板渲染 `_mode_info["desc"]`，
+        #    少了它整页 KeyError（2026-10-30 实测把 4 个 UI 冒烟打红）。
+        "label": "财报公告日刷新(PIT)",
+        "needs_trading_day": False,
+        "llm": False,
+        "minutes": 2,
+        "desc": "抓最近两期财报的实际披露日并落库（巨潮，约 6 秒）——PIT 前视"
+                "防护的数据底座；为空时历史基本面分析会 fail-closed（全部判为"
+                "当时不可见）。周一至周五 08:30 自动跑",
+    },
     "screen": {
-        # ⚠️ 2026-10-24：6 → 12 分钟。原值"约 256 秒"是扩池前的旧数据；扩池后
-        #    实测 `stage_timings.screen.run` = **695.87s（11.6 分钟）**。
-        #    估小的直接后果：检测器以为 09:25+6min=09:31 早于 09:32 的开盘结算，
-        #    于是**永远不报这对冲突**，而实际每天都会重叠 5 分钟。
-        "label": "全市场选股", "needs_trading_day": True, "llm": False, "minutes": 12,
-        "desc": "五路本地初筛（全市场快照）→ 六因子精筛 → TOP5；实测一轮约 696 秒",
+        # ⚠️⚠️ 2026-11-01：12 → **54** 分钟。12 来自单次实测 695.87s 的旧样本，
+        #    而近两周 18 次运行中位 24.9 分钟、**P90 53.5 分钟、最大 54.0 分钟**。
+        #    低估的后果是结构性的：检测器以为 08:15+12 分钟就结束，实际要跑到 10:18
+        #    ⇒ "盘前选股"在开盘 48 分钟后才出结果，却没有任何告警。
+        #    估算口径从此一律取 **P90**（宁可估大：估小 = 检测器失明）。
+        "label": "全市场选股", "needs_trading_day": True, "llm": False, "minutes": 54,
+        "desc": "五路本地初筛（全市场快照）→ 六因子精筛 → TOP5；"
+                "实测中位 24.9 分钟、P90 53.5 分钟（n=18）",
     },
     "rule": {
         "label": "盘后全流程（选股 + 规则回测）", "needs_trading_day": True,
-        # ⚠️ 2026-10-24：15 → 23 分钟。实测日志 `afternoon_full` 一轮
-        #    **1371.6s（22.9 分钟）**，原值 15 分钟让 15:50 的复盘看起来"排得开"，
-        #    而实际 10-23 就是"复盘 15:50 起跑时 afternoon_full 还没结束（15:52 才完）"
-        #    ⇒ 复盘读到的是上一份 `daily_picks`。
-        "llm": False, "minutes": 23,
-        "desc": "零 LLM 成本；实测约 22.9 分钟（1371.6s），安排时按 23 分钟留余量",
+        # ⚠️⚠️ 2026-11-01：23 → **58** 分钟。23 来自单次 1371.6s 的样本；近两周
+        #    22 次运行中位 21.6 分钟、**P90 57.4 分钟、最大 73.4 分钟**。
+        #    这 34 分钟的差值就是"复盘每天读到上一份 daily_picks"的全部原因：
+        #    旧表按 23 分钟排，以为 15:30+23=15:53 与 15:50 的复盘"几乎不撞"，
+        #    实际 P90 要跑到 16:28。
+        #    ⇒ 盘后链路现在一律排在 16:30 之后（见 core/scheduler.py::JOBS）。
+        "llm": False, "minutes": 58,
+        "desc": "零 LLM 成本；实测中位 21.6 分钟、P90 57.4 分钟（n=22），"
+                "排期按 58 分钟留余量",
     },
     "review": {
         "label": "每日复盘（生成报告并推送）", "needs_trading_day": True,
@@ -73,6 +112,46 @@ JOB_MODES: dict = {
         "label": "全市场资金流快照采集", "needs_trading_day": True,
         "llm": False, "minutes": 10,
         "desc": "单次采集约 77 秒，但实测慢时可达 9 分钟（全市场 5210 行 × 4 窗口）",
+    },
+    "alpha_decay": {
+        # 2026-11-01：改**周频**（周五 17:05）。理由：它要读 ret_20d/bench_ret_20d，
+        # 而 T+20 回填至今 0/964 可判 ⇒ 日频只是每天记一条"样本不足"。
+        "label": "超额衰减监控（周频）", "needs_trading_day": True,
+        "llm": False, "minutes": 1,
+        "desc": "读 screen_picks 的 ret_20d/bench_ret_20d，算滚动 6 个月超额；"
+                "主判据 T+20（近 6 月超额 ≤0 即告警推飞书，dedupe_key 按日期幂等），"
+                "T+5 只记日志做早期预警。样本不足判 unknown（不推送、不当 ok）。"
+                "零 LLM、只读库，秒级。",
+    },
+    "turn_share_sync": {
+        # 换手率 / 流通股本日更（2026-11-01）。
+        # 数据层 `data/panel/turn_share/{code}.parquet` 是 10-29 一次性**回填**的产物，
+        # 当时只提供了手工脚本 `scripts/backfill_turn_share.py`，**没有日更任务**
+        # ⇒ 数据停在 2026-10-28。下游 `factor_analysis` 取 `turnover_pct` 时用
+        # `ffill(limit=3)` 兜尾部，所以缺 2 天还能撑，第 4 个交易日（11-03）起
+        # amihud20 等量价因子开始出 NaN —— 这是**会自己变坏**的缺口，不是静态债。
+        # ⚠️ 数据源是 `market_snapshot`（15:40 已落库），**不是**新浪接口：
+        #    实测打新浪 4 并发补 120 只花 250 秒（全量约 4 小时），且 akshare 每次
+        #    调用新建 V8 isolate，多线程会让进程 FATAL abort。详见
+        #    `core/scheduler.py::run_turn_share_job` 与 `data/turn_share.py`。
+        # `needs_trading_day=True`：非交易日快照不会新增，跑了也是空转。
+        "label": "换手率/流通股本日更", "needs_trading_day": True,
+        "llm": False, "minutes": 5,
+        "desc": "从当日 market_snapshot 派生换手率/流通股本，追加进 "
+                "data/panel/turn_share/（读库 + 写 parquet，约 1~3 分钟，零网络）。"
+                "产物是换手率/amihud20 等量价因子的唯一来源，缺一天就会让因子尾部退化成 NaN",
+    },
+    "crowd": {
+        "label": "交易拥挤度截面", "needs_trading_day": True,
+        # 实测 146s（5,572 只 × get_bars，20 日涨幅要读 21 根）。上界给 4 分钟：
+        # 冷启动（进程内无 by_code/覆盖层缓存）会到 3 分钟左右。
+        # ⚠️ 估小的后果是"冲突检测以为排得开、实际撞车"——本项目在 snapshot_flow
+        #    上踩过一次（估 6 分钟、实跑 9 分钟，把 15:45 复盘挤成重复采集）。
+        "llm": False, "minutes": 4,
+        # 零 LLM：只是面板取数 + 分位计算 + 落一个 5,568 行的小 parquet。
+        # 产物供次日盘前选股做**减法闸门**（拥挤度 + 动量双高 ⇒ 不新开仓）。
+        "desc": "全市场行业内分位（换手率/成交额/20日涨幅）→ data/panel/crowd/{date}.parquet；"
+                "供次日 09:25 盘前选股闸门使用，不推送、不调模型",
     },
     "sentiment": {
         "label": "市场情绪参照采集（外部言论）", "needs_trading_day": True,
@@ -94,8 +173,11 @@ JOB_MODES: dict = {
     },
     "backfill_screen": {
         "label": "选股候选 T+N 回填", "needs_trading_day": True,
-        "llm": False, "minutes": 3,
-        "desc": "与上一条锁名不同，可并行",
+        # 2026-11-01：3 → 18 分钟（实测 15:10 起跑、15:53:35 结束 = 17.5 分钟）。
+        # 它逐条走网络拉 K 线（约 5s/条 × 200 条），是最典型的"估小 ⇒ 检测器失明"。
+        # 现在排在 13:30，不依赖当日收盘价，与盘后重活完全错开。
+        "llm": False, "minutes": 18,
+        "desc": "与上一条锁名不同，可并行；实测约 17.5 分钟（逐条拉 K 线）",
     },
     "news": {
         "label": "新闻快讯采集", "needs_trading_day": False, "llm": False, "minutes": 2,
@@ -126,8 +208,10 @@ JOB_MODES: dict = {
                 "与回测同源）。无行情（停牌）时**不成交且不伪造价格**。",
     },
     "ai_settle_close": {
+        # ⚠️ 2026-11-01：内置排期已并入 `ai_close`（16:30，结算 + 记净值一次做完）。
+        #    本 mode 保留给自定义任务（只想跑结算、不想记净值时仍可单独排）。
         "label": "AI交易联赛·收盘结算(日内动作)", "needs_trading_day": True,
-        "llm": False, "minutes": 4,
+        "llm": False, "minutes": 2,
         "desc": "零 LLM 成本。处理盘中唤醒的**卖出与持仓内小额度补仓**"
                 "（**扫描价+滑点**，口径 2，同时留存触发价）。补仓受三重边界约束"
                 "（仅持仓标的 / 仅 price_below / 单次≤持仓市值3%且≤权益1%、"
@@ -149,11 +233,23 @@ JOB_MODES: dict = {
     },
     "ai_mark_nav": {
         "label": "AI交易联赛·当日净值", "needs_trading_day": True,
-        "llm": False, "minutes": 4,
+        "llm": False, "minutes": 2,
         "desc": "零 LLM 成本。用**当日收盘价**（`market_snapshot` 15:40 快照优先、日线兜底）"
                 "记各 AI 账户净值。取不到价的账户**当天不记**并告警（缺就是缺，"
                 "绝不用成本价冒充——2026-10-15 该缺陷曾让 AI 复盘得出『净值不变、无盈亏』）。"
-                "排期 15:52：晚于快照(15:40)、早于决策轮(15:58)。",
+                "排期 16:30（= 盘后全流程 P90 之后），早于决策轮(16:47)。",
+    },
+    "ai_close": {
+        # 合并 mode（2026-11-01）：**结算日内动作 + 记当日净值**一次做完。
+        # 为什么能合：两步都是纯账本、零 LLM，且都要"当日收盘价可用"之后才成立。
+        # 原先拆成 `ai_settle_close`(15:05) 与 `ai_mark_nav`(15:52) 两个槽位，
+        # 15:05 那次其实只做结算（净值在那时必然取不到收盘价）。
+        # 顺序：先结算（当天的成交先入账）→ 再记净值（净值反映结算后的持仓）。
+        "label": "AI交易联赛·收盘结算+净值", "needs_trading_day": True,
+        "llm": False, "minutes": 2,
+        "desc": "零 LLM 成本。先处理盘中唤醒的卖出/补仓（扫描价+滑点），"
+                "再用当日收盘价记各账户净值；两步都必须晚于 15:40 的快照"
+                "（含当日收盘价），否则净值会退化成成本价兜底。",
     },
 }
 
@@ -418,6 +514,24 @@ def validate_job(job: dict, taken_ids=None, require_id: bool = False) -> dict:
     forced = mode in TRADING_DAY_MODES
     tdo = True if forced else bool(job.get("trading_day_only", True))
 
+    # 任务级模型（2026-11-01）：空 = 跟随功能默认。
+    # 非空时必须是**厂商清单里真实存在的模型名** —— 写错一个字母的后果是
+    # 该任务每天悄悄失败（LLM 报错被 run_job 的兜底吞成一条 WARNING），
+    # 而页面上"已配置"看着完全正常。所以宁可在保存时就拒。
+    model = str(job.get("model") or "").strip()[:80]
+    if model:
+        try:
+            from config import providers as _P
+            known = {m for p in _P.get_providers() for m in (p.get("models") or [])}
+            if known and model not in known:
+                raise ValueError(
+                    f"模型「{model}」不在任何厂商的模型清单里；"
+                    f"可选：{'、'.join(sorted(known)[:12])}…（共 {len(known)} 个）")
+        except ValueError:
+            raise
+        except Exception as e:                   # noqa: BLE001  配置读取失败不阻断保存
+            _logger.warning("[自定义任务] 模型清单校验跳过（配置不可读）: %s", e)
+
     return {
         "job_id": job_id,
         "name": name,
@@ -427,6 +541,7 @@ def validate_job(job: dict, taken_ids=None, require_id: bool = False) -> dict:
         "trading_day_only": tdo,
         "trading_day_locked": forced,
         "note": str(job.get("note") or "").strip()[:200],
+        "model": model,
     }
 
 
@@ -548,6 +663,12 @@ def _job_args(job: dict) -> list:
     return [job["mode"], job["name"], bool(job.get("trading_day_only", True))]
 
 
+def _job_kwargs(job: dict) -> dict:
+    """任务级模型（走 kwargs：`model` 在 run_job 签名末尾且有默认值，塞不进 args）。"""
+    m = str(job.get("model") or "").strip()
+    return {"model": m} if m else {}
+
+
 def register_job(scheduler, job: dict):
     """把一条自定义任务挂到（可能已在运行的）调度器上。
 
@@ -565,6 +686,7 @@ def register_job(scheduler, job: dict):
         pass                                    # 不存在即无需删除
     scheduler.add_job(
         run_job, build_trigger(job["cron"]), args=_job_args(job),
+        kwargs=_job_kwargs(job),
         id=job["job_id"], name=job["name"],
         misfire_grace_time=3600, coalesce=True, replace_existing=True,
     )

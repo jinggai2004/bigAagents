@@ -62,6 +62,9 @@ class DailyPipeline:
         # ⚠️ 用 perf_counter（单调）而不是 time()：后者会被系统对时/夏令时跳变影响，
         #    出现负耗时。
         self._timings: dict = {}
+        # 选股阶段的两个"随产物带出去"的元数据（每个 run 由 _stage_screen 重写）
+        self.last_screen_meta: dict = {}
+        self.last_ranked: list = []
 
     # ================================================================
     # 主入口
@@ -104,6 +107,10 @@ class DailyPipeline:
             report["market_signal"] = market_signal
             report["skipped"] = bool(skip_reason)
             report["skip_reason"] = skip_reason
+            # 门槛执行明细随产物落盘（页面「结果」面板读它显示"是否生效"）
+            report["screen_meta"] = getattr(self, "last_screen_meta", {}) or {}
+            # 候选池纯排序（含未入选的），让页面能回答"第 6 名差多少"
+            report["ranked"] = getattr(self, "last_ranked", []) or []
         except Exception as e:
             _logger.exception("[Pipeline] 选股阶段异常")
             report["errors"].append(f"选股失败: {e}")
@@ -159,6 +166,15 @@ class DailyPipeline:
 
     def _stage_screen(self, sector_filter, max_stocks, stock_codes=None):
         """选股阶段。返回 (picks, market_signal, skip_reason)"""
+        # 门槛执行明细（2026-10-30）：拥挤度闸门 / 流动性下限都是**减法**，
+        # 生效与否的唯一表现是"候选少了几只" —— 不随产物带出去就永远看不见。
+        # 用实例属性而不是改返回签名：`_stage_screen` 的 3 元组被多处（含测试）依赖，
+        # 为带一个 meta 改签名，风险远大于收益。
+        self.last_screen_meta = {}
+        # 候选池纯排序（2026-11-01）：入选名单做过行业分散，而 ranked 是
+        # 「按分数全排」。用户要看"为什么这 5 只、第 6 名差多少"就必须有它；
+        # 只落 picks 的话，页面上永远只能看到入选的 5 只。
+        self.last_ranked = []
         if stock_codes:
             # 用户直接指定代码时并未经过选股评分：score 置 None，不伪造 0 分
             picks = [{"股票代码": c, "股票名称": "", "score": None, "factors": {},
@@ -178,6 +194,17 @@ class DailyPipeline:
             #    这个**最该看耗时**的场景反而 `stage_timings` 是空的。
             self._timings["screen.run"] = round(time.perf_counter() - _t, 2)
         market_signal = result.get("market_signal")
+        self.last_screen_meta = {
+            "crowding_gate": result.get("crowding_gate") or {},
+            # 盈利质量闸门（2026-11-01）：与拥挤度/流动性同为**减法**，
+            # 漏带出去等于页面上永远显示"无执行记录"（闸门生效与否无从判断）。
+            "quality_gate": result.get("quality_gate") or {},
+            "liquidity_floor": result.get("liquidity_floor") or {},
+            "rank_meta": result.get("rank_meta") or {},
+            "stale_skipped": result.get("stale_skipped") or {},
+            "vol_pct_scope": result.get("vol_pct_scope"),
+        }
+        self.last_ranked = result.get("ranked") or []
         if result.get("skipped"):
             return [], market_signal, result.get("reason", "市场环境不佳")
         picks = result.get("candidates", [])

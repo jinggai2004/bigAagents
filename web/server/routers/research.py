@@ -35,3 +35,14 @@ def api_research_walkforward() -> dict:
 def api_research_attributions(name: str | None = None) -> dict:
     """交易级盈亏分解（3.1）。轻量在线计算 + cache 300s。"""
     return research.attributions(name=name)
+
+
+@router.get("/api/research/brinson")
+def api_research_brinson(start: str | None = None, end: str | None = None,
+                         source: str | None = None, min_names: int = 0) -> dict:
+    """Brinson 行业归因（配置/选股/交互 + Carino 多期链接）。
+
+    参数：start/end 选股日期区间；source 限定 screen|pipeline；min_names 只保留
+    组合规模 ≥ N 的期（用于剔除规模跃变段）。在线计算 ~2s，cache 300s。
+    """
+    return research.brinson(start=start, end=end, source=source, min_names=min_names)

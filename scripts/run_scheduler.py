@@ -169,6 +169,16 @@ def main() -> int:
     # 自定义任务热加载：库里的增删改 60 秒内生效，不用重启进程。
     _start_custom_job_reloader(scheduler)
 
+    # 启动补跑（2026-10-31）：APScheduler 重启后不记得"今天哪个槽位跑过"，
+    # 撞上重启窗口的任务会静默消失（2026-10-30 的 evening_analysis 就是这么丢的）。
+    # 放在 start() **之前**起线程：start() 是阻塞调用，若同步补跑，这段时间到点的
+    # 任务会全部错过——正好制造我们想避免的问题。
+    try:
+        from core.scheduler import start_catchup_async
+        start_catchup_async()
+    except Exception as e:                      # noqa: BLE001
+        _logger.warning("启动补跑未启用（不影响正常调度）: %s", e)
+
     try:
         scheduler.start()
     except (KeyboardInterrupt, SystemExit):

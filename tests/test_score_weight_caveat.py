@@ -99,6 +99,12 @@ class TestCaveatReachesEverySurface:
         """选股页必须渲染这条说明（源码级守护：页面渲染要在 AppTest 里跑很重，
         但"文案有没有接线"这件事用源码断言已经足够，且漂移即变红）"""
         import pathlib
-        page = pathlib.Path("ui/pages/1_📊_选股.py").read_text(encoding="utf-8")
+        page_path = pathlib.Path("ui/pages/1_📊_选股.py")
+        if not page_path.exists():
+            # 2026-11-01：Streamlit 界面已归档（archive/legacy_streamlit_20261101/ui）。
+            # 说明常量本身仍由本文件其它用例守着（`tool_screen_stocks` 的评分说明），
+            # 这里只少一条"源码里有没有接线"的补充断言。
+            pytest.skip("Streamlit 界面已归档，页面级守护停用")
+        page = page_path.read_text(encoding="utf-8")
         assert "SCORE_WEIGHT_CAVEAT" in page, "选股页没有引用评分说明常量"
         assert "评分怎么读" in page, "说明没有以用户看得懂的小标题呈现"

@@ -26,9 +26,11 @@ numpy>=1.26.0,<3         # 本地验证 2.1.2
 ta
 
 # 前端
-# 注意：>=1.59 是"已验证可用"的下界。UI 已从 use_container_width 迁移到 width="stretch"，
-# 而该参数在旧版本（如 1.32）不存在，地板不抬高会在运行时直接 TypeError。
-streamlit>=1.59.0
+# ⚠️ 2026-11-01：Streamlit **已移除**。界面层归档在 archive/legacy_streamlit_20261101/ui，
+#    运行时与测试都不再需要它 —— 页面级用例改成**函数内**局部 import
+#    `streamlit.testing.AppTest`，且都在 `pytest.skip` 之后（界面不在时连 import
+#    都不发生）。以后再引入 Streamlit 请连测试一起评估，别只加依赖。
+#    备份：如需跑 archive 里的旧页面，单独 `pip install "streamlit>=1.59.0"` 即可。
 plotly>=5.22.0,<7        # 本地验证 6.9.0；7.x 未验证，封顶
 # 新前端（web/templates + FastAPI 只读层，2026-10-25 起 P1）：
 # uvicorn 本机已装但这里显式声明（新机器复现需要）；fastapi 此前未装未声明。

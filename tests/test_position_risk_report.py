@@ -20,12 +20,17 @@ import os
 import sys
 
 import pytest
-from streamlit.testing.v1 import AppTest
 
 from tests.conftest import use_template_db
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PAGE = os.path.join(_ROOT, "ui", "pages", "6_💼_持仓.py")
+
+# 2026-11-01：Streamlit 界面已归档（archive/legacy_streamlit_20261101/ui/）。
+# 只跳过**页面级**用例；前面那些阈值/集中度/流动性用例是纯逻辑，照常跑。
+_UI_RETIRED = not os.path.exists(PAGE)
+ui_retired = pytest.mark.skipif(_UI_RETIRED,
+                                reason="Streamlit 界面已归档，页面级用例停用")
 sys.path.insert(0, _ROOT)
 
 DAY = "2026-10-16"
@@ -305,6 +310,7 @@ class TestBuildHoldings:
 # 6. 页面接线
 # ================================================================
 
+@ui_retired
 class TestPositionPageStructure:
     PAGE = PAGE
 
@@ -344,6 +350,8 @@ class TestPositionPageStructure:
         from core.portfolio import PortfolioManager
         monkeypatch.setattr(PortfolioManager, "_get_current_price",
                             lambda self, code: prices.get(code, 0.0))
+        # ⚠️ 2026-11-01：`AppTest` 局部导入（Streamlit 已从依赖移除，见文件头说明）
+        from streamlit.testing.v1 import AppTest
         at = AppTest.from_file(self.PAGE, default_timeout=120)
         at.run()
         return at

@@ -125,6 +125,31 @@ INDICATORS: dict = {
         key="volatility", label="年化波动率", unit="%", kind="num", source=SOURCE_KLINE,
         aliases=("年化波动率", "波动率"),
         sanity=(0, 500)),
+    # ── 论文因子扫描晋身（2026-10-30，详见 output/因子论文扫描_30因子_回测报告_2026-10-30.md）──
+    "upshd20": Indicator(
+        key="upshd20", label="20日上影占比", unit="%", kind="num", source=SOURCE_KLINE,
+        aliases=("上影线占比", "长上影"),
+        sanity=(0, 50)),
+    "turn_std20": Indicator(
+        key="turn_std20", label="换手波动20", unit="%", kind="num", source=SOURCE_KLINE,
+        aliases=("换手率波动", "换手波动"),
+        sanity=(0, 50)),
+    "amihud20": Indicator(
+        key="amihud20", label="Amihud非流动性", unit="亿⁻¹", kind="num", source=SOURCE_KLINE,
+        aliases=("非流动性", "冲击成本"),
+        sanity=(0, 100000)),
+    "lndvol20": Indicator(
+        key="lndvol20", label="log成交额20", unit="log元", kind="num", source=SOURCE_KLINE,
+        aliases=("成交额对数", "log成交额"),
+        sanity=(0, 30)),
+    "mom1m": Indicator(
+        key="mom1m", label="1月反转", unit="%", kind="num", source=SOURCE_KLINE,
+        aliases=("一个月反转", "21日涨跌幅", "月度反转"),
+        sanity=(-100, 100)),
+    "pv_corr20": Indicator(
+        key="pv_corr20", label="量价相关20", unit="相关系数", kind="num", source=SOURCE_KLINE,
+        aliases=("量价相关性", "量价背离"),
+        sanity=(-1, 1)),
     "ma_bullish": Indicator(
         key="ma_bullish", label="均线多头排列", unit="", kind="bool", source=SOURCE_KLINE,
         aliases=("均线多头排列", "多头排列", "均线多头")),

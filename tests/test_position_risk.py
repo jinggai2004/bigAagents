@@ -352,5 +352,6 @@ def test_risk_check_is_registered_and_skips_holidays():
     assert "risk_check" in ids
     entry = next(j for j in scheduler.JOBS if j[0] == "risk_check")
     assert entry[2] == "risk"
-    src = inspect.getsource(scheduler.run_job)
+    # 2026-11-01：`run_job` 拆薄包装，分派主体在 `_run_job_impl`（读包装层恒为空断言）
+    src = inspect.getsource(scheduler._run_job_impl)
     assert '"risk"' in src, "risk 必须加入非交易日跳过清单，否则周末也会跑"
