@@ -5,7 +5,7 @@
 <p>
   <img alt="Python" src="https://img.shields.io/badge/Python-3.12+-3776AB?logo=python&logoColor=white">
   <img alt="License" src="https://img.shields.io/badge/License-Apache--2.0-blue">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-3500%2B-green">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-4400%2B-green">
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-lightgrey">
 </p>
 
@@ -23,7 +23,7 @@
   - [2. A 股制度工程化](#2-a-股制度工程化)
   - [3. 防自欺机制](#3-防自欺机制)
   - [4. 归因体系](#4-归因体系)
-- [功能页面总览](#功能页面总览web-界面-10-页--48-端点)
+- [功能页面总览](#功能页面总览web-界面-10-页--52-端点)
 - [每日自动化](#每日自动化)
 - [快速开始](#快速开始)
 - [配置参考](#配置参考)
@@ -154,7 +154,7 @@ AI 结果只在对照层比较，绝不回灌主链。
 
 ---
 
-## 功能页面总览（Web 界面 10 页 / 48 端点）
+## 功能页面总览（Web 界面 10 页 / 52 端点）
 
 | 页面 | 功能 |
 |------|------|
@@ -174,18 +174,19 @@ AI 结果只在对照层比较，绝不回灌主链。
 
 ## 每日自动化
 
-**15 个内置调度任务**（时刻与含义以 `core/scheduler.py::JOBS` 为唯一权威），
-交易日按闸门自动跳过非交易日。关键时点举例：
+**22 个内置调度任务**（时刻与含义以 `core/scheduler.py::JOBS` 为唯一权威），
+非交易日按闸门自动跳过。排期判据是 **P90 实测**（不是估算，旧表按估算排导致
+"盘前选股"在开盘 48 分钟后才出结果）；关键时点：
 
 ```
-09:25  盘前选股
-09:32  联赛 T+1 开盘结算
-15:05  联赛日内结算
-15:30  盘后全流程（深度分析/模拟下单）
-15:35  分析历史回填 + T+5/T+20 里程碑复盘（+ 自动 LLM 归因）
-15:40  资金流/估值截面快照
-15:45  每日复盘
-15:58  联赛盘后决策轮（唯一花钱的环节，≈1.3 万 tokens/日）
+08:05  财报公告日刷新（PIT 前视防护底座，必须早于盘前选股）
+08:15  盘前选股（P90 54 分钟 ⇒ 09:09 前完成，真正在开盘前出结论）
+09:45  联赛 T+1 开盘结算
+13:05  联赛午间决策轮（用上午真实量价）
+15:30  盘后全流程（选股 + 规则回测，P90 58 分钟 ⇒ 16:28，全天最长一环）
+15:40  资金流/估值截面快照（当日换手率/流通股本落库）
+17:15  换手率/流通股本日更（从当日快照派生，零网络，1~3 分钟）
+18:10  盘后深度分析 TOP8（DeepSeek 半价时段，唯一花钱的环节，≈1.3 万 tokens/日）
 ```
 
 > ⚠️ 调度器**必须用户前台启动**（双击 `启动调度器.bat`），后台会话会被回收。
@@ -260,15 +261,15 @@ python -m data.full_market --refresh-basic --snapshot
 ## 测试与质量保障
 
 ```bash
-运行测试.bat                            # 全量（Windows，约 6 分钟，junit xml 报告）
+运行测试.bat                            # 全量（Windows，约 10 分钟，junit xml 报告）
 python -m pytest tests/test_backtest_validate.py -q    # 单文件
 git config core.hooksPath .githooks    # 启用 pre-push 快速闸门
 ```
 
-- **3,500+ 用例**；conftest autouse 夹具保证**全套件零 LLM 调用、零真实网络**
+- **4,400+ 用例**；conftest autouse 夹具保证**全套件零 LLM 调用、零真实网络**
   （断网模拟用 `socket.connect` 补丁，判据 = `blocked()==0 且 socket_attempts()==0`）
-- 端点数量由 **`TestDocEndpointCount` 硬闸门**看守：前端文档（48 路径/53 操作）与
-  实际路由必须同步，改端点不改文档直接红
+- 端点数量由 **`TestDocEndpointCount` 硬闸门**看守：前端文档（52 路径/59 操作）
+  与实际路由必须同步，改端点不改文档直接红
 - 数值公式类模块（DSR/PBO/Carino/逆正态）全部带**数值锚点回归测试**——公式写反
   （如 γ 写成偏度）会在已知锚点值上精确失败
 - CI（GitHub Actions）：语法全检（compileall）+ 纯逻辑测试子集（无需本地数据）
@@ -290,7 +291,7 @@ core/     # 领域层（全部业务逻辑在此，Web 层只做薄包装）
   ├─ market_factor.py    # 全市场等权因子（唯一来源）
   └─ scheduler.py        # 22 个调度任务（JOBS 唯一权威）
 data/     # 数据层：多源(新浪/东财/BaoStock/Tushare/akshare) + 降级链 + 全市场面板
-web/      # FastAPI 服务 + 原生 JS 前端（10 页模板 / 48 端点 / 1 WebSocket）
+web/      # FastAPI 服务 + 原生 JS 前端（10 页模板 / 52 端点 / 1 WebSocket）
 db/       # SQLite 持久化（timeout=15，无 WAL 是刻意选择）
 llm/      # 多厂商客户端与路由（含成本护栏）
 scripts/  # 数据回填 / 回测扫描 / walk-forward / 打包 / 看门狗
