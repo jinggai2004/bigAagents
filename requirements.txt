@@ -18,6 +18,11 @@ tushare>=1.4.29
 baostock>=0.9.4
 pandas>=2.2.0,<3         # 本地验证 2.2.3；pandas 3.0 有破坏性变更（CoW 默认等），封顶
 numpy>=1.26.0,<3         # 本地验证 2.1.2
+# ⚠️⚠️ parquet 引擎（2026-11-02 补齐）：全市场面板/行业/换手率层全走 pd.read_parquet
+#    （17 个模块），是**硬运行时依赖**。此前靠 streamlit 传递安装、没在本文档声明 ——
+#    移除 streamlit 后 GitHub Actions 上 2 个测试 ImportError（无 pyarrow/fastparquet）。
+#    本机验证 25.0.0；地板给足余量（pandas 2.x 官方要求 pyarrow>=7）。
+pyarrow>=14.0.0
 
 # 技术指标
 # 2026-10-25：移除 pandas-ta>=0.3.14 —— PyPI 只发过 0.3.14b0（预发布，pip 默认不匹配），
